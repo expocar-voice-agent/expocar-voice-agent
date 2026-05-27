@@ -267,7 +267,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
           },
           output: {
             format: { type: "audio/pcmu" },
-            voice: config.openai.voice
+            voice: config.openai.voice,
+            speed: config.openai.speed
           }
         },
         tools: realtimeTools,
