@@ -2,6 +2,8 @@ import { searchInventory } from "./inventory.js";
 import { checkAppointmentSlot, createAppointment, getAvailableSlots } from "./calendar.js";
 import { saveLead } from "./leads.js";
 import { notifySeller, normalizeWhatsappNumber, sendAppointmentWhatsapp } from "./whatsapp.js";
+import twilio from "twilio";
+import { config } from "./config.js";
 
 function formatRomeDate(value) {
   return new Intl.DateTimeFormat("it-IT", {
@@ -35,6 +37,57 @@ function buildImportSummary(args) {
   ].filter(Boolean).join("\n");
 }
 
+function getTwilioClient() {
+  if (!config.twilio.accountSid || !config.twilio.authToken) return null;
+  return twilio(config.twilio.accountSid, config.twilio.authToken);
+}
+
+function normalizePhone(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  let number = text.replace(/^whatsapp:/, "").replace(/[^\d+]/g, "");
+  if (number.startsWith("00")) number = `+${number.slice(2)}`;
+  if (!number.startsWith("+") && number.startsWith("3")) number = `+39${number}`;
+  return number.startsWith("+") ? number : "";
+}
+
+async function transferActiveCall({ callSid, reason }) {
+  const client = getTwilioClient();
+  const to = normalizePhone(config.twilio.humanTransferTo);
+  if (!client || !callSid || !to) {
+    return {
+      ok: false,
+      transferred: false,
+      phone: to || config.twilio.humanTransferTo,
+      message: "Trasferimento non disponibile. Comunica il numero diretto e WhatsApp."
+    };
+  }
+
+  const response = new twilio.twiml.VoiceResponse();
+  response.say({
+    language: "it-IT",
+    voice: "Polly.Giorgio"
+  }, "La metto subito in contatto con un consulente Expocar. Se la linea dovesse cadere, puo chiamare o scrivere su WhatsApp al numero 371 193 8885.");
+  response.dial({
+    callerId: config.twilio.fromNumber || undefined,
+    timeout: 25
+  }, to);
+
+  await client.calls(callSid).update({ twiml: response.toString() });
+  saveLead({
+    type: "call_transfer",
+    callSid,
+    to,
+    reason
+  });
+  return {
+    ok: true,
+    transferred: true,
+    phone: to,
+    message: "Trasferimento avviato verso il consulente."
+  };
+}
+
 export const realtimeTools = [
   {
     type: "function",
@@ -63,7 +116,15 @@ export const realtimeTools = [
       properties: {
         requestedStartTime: {
           type: "string",
-          description: "Orario preciso richiesto dal cliente in formato ISO, per esempio domani alle 18."
+          description: "Orario preciso richiesto dal cliente. Interpreta sempre come orario locale italiano, non UTC."
+        },
+        localDate: {
+          type: "string",
+          description: "Data locale dell'appuntamento in Italia, formato YYYY-MM-DD."
+        },
+        localTime: {
+          type: "string",
+          description: "Ora locale dell'appuntamento in Italia, formato HH:mm, per esempio 11:00."
         },
         preferredDate: {
           type: "string",
@@ -84,7 +145,9 @@ export const realtimeTools = [
         phone: { type: "string" },
         whatsappTo: { type: "string", description: "Numero WhatsApp cliente in formato whatsapp:+39..." },
         interest: { type: "string" },
-        startTime: { type: "string", description: "Orario in formato ISO." },
+        startTime: { type: "string", description: "Orario richiesto dal cliente. Interpreta sempre come orario locale italiano, non UTC." },
+        localDate: { type: "string", description: "Data locale dell'appuntamento in Italia, formato YYYY-MM-DD." },
+        localTime: { type: "string", description: "Ora locale dell'appuntamento in Italia, formato HH:mm, per esempio 11:00." },
         notes: { type: "string" }
       }
     }
@@ -118,6 +181,17 @@ export const realtimeTools = [
   },
   {
     type: "function",
+    name: "trasferisci_chiamata",
+    description: "Trasferisce la telefonata a un consulente umano quando il cliente lo chiede.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "Motivo del trasferimento richiesto dal cliente." }
+      }
+    }
+  },
+  {
+    type: "function",
     name: "avvisa_venditore",
     description: "Invia una notifica WhatsApp al venditore per escalation o lead caldo.",
     parameters: {
@@ -130,7 +204,7 @@ export const realtimeTools = [
   }
 ];
 
-export async function runTool(name, args) {
+export async function runTool(name, args, context = {}) {
   if (name === "cerca_auto") {
     const results = await searchInventory(args);
     return {
@@ -145,7 +219,11 @@ export async function runTool(name, args) {
   if (name === "controlla_disponibilita") {
     try {
       if (args.requestedStartTime) {
-        const requestedSlot = await checkAppointmentSlot({ startTime: args.requestedStartTime });
+        const requestedSlot = await checkAppointmentSlot({
+          startTime: args.requestedStartTime,
+          localDate: args.localDate,
+          localTime: args.localTime
+        });
         return { requestedSlot, calendarAvailable: true };
       }
       const slots = await getAvailableSlots(args);
@@ -235,6 +313,13 @@ export async function runTool(name, args) {
       });
     }
     return { ok: true, lead };
+  }
+
+  if (name === "trasferisci_chiamata") {
+    return transferActiveCall({
+      callSid: context.callSid,
+      reason: args.reason
+    });
   }
 
   if (name === "avvisa_venditore") {

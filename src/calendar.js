@@ -65,6 +65,26 @@ function dateFromRomeWallTime(yyyyMmDd, hour, minute = 0) {
   return new Date(utcGuess.getTime() - offsetMinutes * 60 * 1000);
 }
 
+function dateFromLocalInput(value) {
+  if (value instanceof Date) return value;
+  const text = String(value || "").trim();
+  const localMatch = text.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{1,2}):(\d{2})(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})?$/);
+  if (localMatch) {
+    return dateFromRomeWallTime(localMatch[1], Number(localMatch[2]), Number(localMatch[3]));
+  }
+
+  const parsed = new Date(text);
+  return parsed;
+}
+
+function dateFromAppointmentArgs(args) {
+  if (args?.localDate && args?.localTime) {
+    const [hour, minute = "0"] = String(args.localTime).split(":");
+    return dateFromRomeWallTime(args.localDate, Number(hour), Number(minute));
+  }
+  return dateFromLocalInput(args?.startTime);
+}
+
 function isWeekday(date) {
   const weekday = getRomeParts(date).weekday;
   return !["Sat", "Sun"].includes(weekday);
@@ -130,9 +150,9 @@ function buildCandidateSlots(fromDate, days = 14) {
   return slots;
 }
 
-export async function checkAppointmentSlot({ startTime }) {
+export async function checkAppointmentSlot(args) {
   const calendar = getCalendarClient();
-  const start = new Date(startTime);
+  const start = dateFromAppointmentArgs(args);
   if (Number.isNaN(start.getTime())) {
     return { available: false, reason: "Orario non valido." };
   }
@@ -194,9 +214,9 @@ export async function getAvailableSlots({ preferredDate, days = 14 } = {}) {
     }));
 }
 
-export async function createAppointment({ name, phone, interest, startTime, notes }) {
+export async function createAppointment({ name, phone, interest, startTime, localDate, localTime, notes }) {
   const calendar = getCalendarClient();
-  const start = new Date(startTime);
+  const start = dateFromAppointmentArgs({ startTime, localDate, localTime });
   const validation = validateAppointmentWindow(start);
   if (!validation.ok) {
     throw new Error(validation.reason);

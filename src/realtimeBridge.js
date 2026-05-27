@@ -121,7 +121,11 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
     logEvent("tool_call_started", { name, args });
     session?.toolCalls?.push(name);
     const output = await Promise.race([
-      runTool(name, args),
+      runTool(name, args, {
+        callSid: session?.callSid,
+        from: session?.from,
+        to: session?.to
+      }),
       new Promise((_, reject) => {
         setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 12000);
       })

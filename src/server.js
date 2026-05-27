@@ -779,6 +779,20 @@ app.post("/twilio/stream-status", (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/twilio/message-status", (req, res) => {
+  logEvent("twilio_message_status", {
+    messageSid: req.body?.MessageSid || req.body?.SmsSid,
+    messageStatus: req.body?.MessageStatus || req.body?.SmsStatus,
+    errorCode: req.body?.ErrorCode,
+    errorMessage: req.body?.ErrorMessage,
+    to: req.body?.To,
+    from: req.body?.From,
+    channelPrefix: req.body?.ChannelPrefix,
+    accountSid: req.body?.AccountSid
+  });
+  res.json({ ok: true });
+});
+
 app.post("/openai/realtime/webhook", async (req, res, next) => {
   try {
     const signature = verifyOpenAIWebhook(req);

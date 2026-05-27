@@ -7,6 +7,11 @@ function getClient() {
   return twilio(config.twilio.accountSid, config.twilio.authToken);
 }
 
+function messageStatusCallbackUrl() {
+  if (!config.publicBaseUrl) return "";
+  return `${config.publicBaseUrl}/twilio/message-status`;
+}
+
 export function normalizeWhatsappNumber(value) {
   if (!value) return "";
   const trimmed = String(value).trim();
@@ -104,6 +109,8 @@ https://expocaritalia.simplybook.it/v2/#book/service/2`;
         to: normalizedTo,
         body
       };
+  const statusCallback = messageStatusCallbackUrl();
+  if (statusCallback) payload.statusCallback = statusCallback;
 
   const message = await client.messages.create(payload);
   logEvent("whatsapp_customer_after_call_sent", { to: normalizedTo, sid: message.sid });

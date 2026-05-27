@@ -31,6 +31,7 @@ export const config = {
     fromNumber: process.env.TWILIO_FROM_NUMBER || "",
     whatsappFrom: process.env.TWILIO_WHATSAPP_FROM || "",
     sellerWhatsappTo: process.env.SELLER_WHATSAPP_TO || "whatsapp:+393711938885",
+    humanTransferTo: process.env.HUMAN_TRANSFER_PHONE || "+393711938885",
     messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID || "",
     customerTemplateContentSid: process.env.TWILIO_CUSTOMER_TEMPLATE_CONTENT_SID || ""
   },
