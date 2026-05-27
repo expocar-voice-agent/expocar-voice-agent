@@ -30,7 +30,9 @@ export const config = {
     authToken: process.env.TWILIO_AUTH_TOKEN || "",
     fromNumber: process.env.TWILIO_FROM_NUMBER || "",
     whatsappFrom: process.env.TWILIO_WHATSAPP_FROM || "",
-    sellerWhatsappTo: process.env.SELLER_WHATSAPP_TO || "whatsapp:+393711938885"
+    sellerWhatsappTo: process.env.SELLER_WHATSAPP_TO || "whatsapp:+393711938885",
+    messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID || "",
+    customerTemplateContentSid: process.env.TWILIO_CUSTOMER_TEMPLATE_CONTENT_SID || ""
   },
   multigestionale: {
     userApi: required("MULTIGESTIONALE_USER_API"),

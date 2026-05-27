@@ -33,6 +33,10 @@ services:
         value: "+18722595539"
       - key: TWILIO_WHATSAPP_FROM
         value: whatsapp:+14155238886
+      - key: TWILIO_MESSAGING_SERVICE_SID
+        sync: false
+      - key: TWILIO_CUSTOMER_TEMPLATE_CONTENT_SID
+        sync: false
       - key: SELLER_WHATSAPP_TO
         value: whatsapp:+393711938885
       - key: BUSINESS_PUBLIC_PHONE

@@ -54,10 +54,14 @@ export async function sendAppointmentWhatsapp({ to, name, startTime }) {
 export async function sendCustomerAfterCallWhatsapp({ to }) {
   const client = getClient();
   const normalizedTo = normalizeWhatsappNumber(to);
-  if (!client || !config.twilio.whatsappFrom || !normalizedTo) {
+  const canSendFreeform = Boolean(config.twilio.whatsappFrom);
+  const canSendTemplate = Boolean(config.twilio.messagingServiceSid && config.twilio.customerTemplateContentSid);
+
+  if (!client || !normalizedTo || (!canSendFreeform && !canSendTemplate)) {
     logEvent("whatsapp_customer_after_call_skipped", {
       hasClient: Boolean(client),
-      hasFrom: Boolean(config.twilio.whatsappFrom),
+      hasFrom: canSendFreeform,
+      hasTemplate: canSendTemplate,
       hasTo: Boolean(normalizedTo)
     });
     return { skipped: true };
@@ -89,11 +93,19 @@ Il nostro servizio è completamente chiavi in mano e comprende:
 📍 Per informazioni o per fissare un appuntamento in sede può cliccare qui:
 https://expocaritalia.simplybook.it/v2/#book/service/2`;
 
-  const message = await client.messages.create({
-    from: config.twilio.whatsappFrom,
-    to: normalizedTo,
-    body
-  });
+  const payload = canSendTemplate
+    ? {
+        messagingServiceSid: config.twilio.messagingServiceSid,
+        to: normalizedTo,
+        contentSid: config.twilio.customerTemplateContentSid
+      }
+    : {
+        from: config.twilio.whatsappFrom,
+        to: normalizedTo,
+        body
+      };
+
+  const message = await client.messages.create(payload);
   logEvent("whatsapp_customer_after_call_sent", { to: normalizedTo, sid: message.sid });
   return message;
 }
