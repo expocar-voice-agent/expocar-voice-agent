@@ -27,10 +27,14 @@ export function normalizeWhatsappNumber(value) {
 export async function sendAppointmentWhatsapp({ to, name, startTime }) {
   const client = getClient();
   const normalizedTo = normalizeWhatsappNumber(to);
-  if (!client || !config.twilio.whatsappFrom || !normalizedTo) {
+  const canSendFreeform = Boolean(config.twilio.whatsappFrom);
+  const canSendTemplate = Boolean(config.twilio.messagingServiceSid && config.twilio.appointmentTemplateContentSid);
+
+  if (!client || !normalizedTo || (!canSendFreeform && !canSendTemplate)) {
     logEvent("whatsapp_customer_skipped", {
       hasClient: Boolean(client),
-      hasFrom: Boolean(config.twilio.whatsappFrom),
+      hasFrom: canSendFreeform,
+      hasTemplate: canSendTemplate,
       hasTo: Boolean(normalizedTo)
     });
     return { skipped: true };
@@ -47,11 +51,26 @@ export async function sendAppointmentWhatsapp({ to, name, startTime }) {
 
   const body = `Ciao ${name || ""}, ti confermiamo l'appuntamento presso Expocar per ${formattedDate}.\n\nPosizione sede:\n${config.business.locationUrl}\n\nA presto!\nExpocar`;
 
-  const message = await client.messages.create({
-    from: config.twilio.whatsappFrom,
-    to: normalizedTo,
-    body
-  });
+  const payload = canSendTemplate
+    ? {
+        messagingServiceSid: config.twilio.messagingServiceSid,
+        to: normalizedTo,
+        contentSid: config.twilio.appointmentTemplateContentSid,
+        contentVariables: JSON.stringify({
+          1: name || "cliente",
+          2: formattedDate,
+          3: config.business.locationUrl
+        })
+      }
+    : {
+        from: config.twilio.whatsappFrom,
+        to: normalizedTo,
+        body
+      };
+  const statusCallback = messageStatusCallbackUrl();
+  if (statusCallback) payload.statusCallback = statusCallback;
+
+  const message = await client.messages.create(payload);
   logEvent("whatsapp_customer_sent", { to: normalizedTo, sid: message.sid });
   return message;
 }

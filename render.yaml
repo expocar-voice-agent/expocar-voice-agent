@@ -37,6 +37,8 @@ services:
         sync: false
       - key: TWILIO_CUSTOMER_TEMPLATE_CONTENT_SID
         sync: false
+      - key: TWILIO_APPOINTMENT_TEMPLATE_CONTENT_SID
+        sync: false
       - key: SELLER_WHATSAPP_TO
         value: whatsapp:+393711938885
       - key: HUMAN_TRANSFER_PHONE

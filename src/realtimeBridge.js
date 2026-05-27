@@ -5,6 +5,7 @@ import { logEvent } from "./logger.js";
 import { realtimeTools, runTool } from "./tools.js";
 import { saveLead } from "./leads.js";
 import { notifySeller, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
+import { alertSeller } from "./alerts.js";
 
 function safeJsonParse(value, fallback = {}) {
   try {
@@ -141,6 +142,12 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
     }));
   } catch (error) {
     logEvent("tool_call_failed", { name, error: error.message });
+    alertSeller("tool_call_failed", {
+      message: error.message,
+      callSid: session?.callSid,
+      from: session?.from,
+      details: { tool: name, args }
+    });
     openaiWs.send(JSON.stringify({
       type: "conversation.item.create",
       item: {
@@ -280,13 +287,16 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
     }));
 
-    openaiWs.send(JSON.stringify({
-      type: "response.create",
-      response: {
-        output_modalities: ["audio"],
-        instructions: "Di esattamente, con voce naturale e ritmo spedito: Expocar, buongiorno, sono Marco. In cosa posso esserle utile?"
-      }
-    }));
+    setTimeout(() => {
+      if (openaiWs.readyState !== WebSocket.OPEN || session.transcript.length) return;
+      openaiWs.send(JSON.stringify({
+        type: "response.create",
+        response: {
+          output_modalities: ["audio"],
+          instructions: "Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta con voce naturale e ritmo spedito: Expocar, buongiorno, sono Marco. In cosa posso esserle utile? Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale."
+        }
+      }));
+    }, 1800);
   });
 
   twilioWs.on("message", (raw) => {
@@ -326,6 +336,13 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (event.type === "error") {
       logEvent("openai_realtime_server_error", {
         error: event.error
+      });
+      alertSeller("openai_realtime_server_error", {
+        message: event.error?.message,
+        code: event.error?.code,
+        callSid: session.callSid,
+        from: session.from,
+        details: event.error
       });
       return;
     }
@@ -406,12 +423,24 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       message: error.message,
       code: error.code
     });
+    alertSeller("openai_realtime_error", {
+      message: error.message,
+      code: error.code,
+      callSid: session.callSid,
+      from: session.from
+    });
   });
 
   twilioWs.on("error", (error) => {
     logEvent("twilio_media_error", {
       message: error.message,
       code: error.code
+    });
+    alertSeller("twilio_media_error", {
+      message: error.message,
+      code: error.code,
+      callSid: session.callSid,
+      from: session.from
     });
   });
 

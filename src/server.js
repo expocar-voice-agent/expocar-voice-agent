@@ -11,8 +11,9 @@ import { acceptOpenAISipCall, bridgeTwilioToOpenAI, monitorOpenAISipCall } from 
 import { searchInventory } from "./inventory.js";
 import { getAvailableSlots } from "./calendar.js";
 import { readRecentLeads } from "./leads.js";
-import { notifySeller, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
+import { notifySeller, sendAppointmentWhatsapp, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
+import { alertSeller } from "./alerts.js";
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -31,6 +32,23 @@ app.use((req, _res, next) => {
     userAgent: req.headers["user-agent"]
   });
   next();
+});
+
+process.on("uncaughtException", (error) => {
+  logEvent("uncaught_exception", { error: error.message, stack: error.stack });
+  alertSeller("uncaught_exception", {
+    message: error.message,
+    details: { stack: error.stack }
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logEvent("unhandled_rejection", { error: error.message, stack: error.stack });
+  alertSeller("unhandled_rejection", {
+    message: error.message,
+    details: { stack: error.stack }
+  });
 });
 
 app.get("/health", (_req, res) => {
@@ -210,6 +228,56 @@ app.get("/admin/test-customer-whatsapp", requireAdmin, async (req, res) => {
       status: error.status
     });
   }
+});
+
+app.get("/admin/test-appointment-whatsapp", requireAdmin, async (req, res) => {
+  try {
+    const to = req.query.to;
+    if (!to) {
+      res.status(400).json({ ok: false, error: "missing to query parameter, example: ?to=+393711938885" });
+      return;
+    }
+
+    const startTime = req.query.startTime || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const message = await sendAppointmentWhatsapp({
+      to,
+      name: req.query.name || "cliente",
+      startTime
+    });
+    res.json({
+      ok: !message.skipped,
+      skipped: Boolean(message.skipped),
+      to,
+      sid: message.sid || null
+    });
+  } catch (error) {
+    logEvent("admin_test_appointment_whatsapp_failed", {
+      to: req.query.to,
+      error: error.message,
+      code: error.code,
+      status: error.status
+    });
+    res.status(500).json({
+      ok: false,
+      to: req.query.to,
+      error: error.message,
+      code: error.code,
+      status: error.status
+    });
+  }
+});
+
+app.get("/admin/test-alert", requireAdmin, async (req, res) => {
+  const result = await alertSeller("test_alert", {
+    message: "Test alert sistema Expocar",
+    path: "/admin/test-alert"
+  });
+  res.json({
+    ok: !result.skipped,
+    skipped: Boolean(result.skipped),
+    throttled: Boolean(result.throttled),
+    sid: result.sid || null
+  });
 });
 
 async function runCheck(name, fn) {
@@ -780,16 +848,27 @@ app.post("/twilio/stream-status", (req, res) => {
 });
 
 app.post("/twilio/message-status", (req, res) => {
+  const messageStatus = req.body?.MessageStatus || req.body?.SmsStatus;
+  const errorCode = req.body?.ErrorCode;
   logEvent("twilio_message_status", {
     messageSid: req.body?.MessageSid || req.body?.SmsSid,
-    messageStatus: req.body?.MessageStatus || req.body?.SmsStatus,
-    errorCode: req.body?.ErrorCode,
+    messageStatus,
+    errorCode,
     errorMessage: req.body?.ErrorMessage,
     to: req.body?.To,
     from: req.body?.From,
     channelPrefix: req.body?.ChannelPrefix,
     accountSid: req.body?.AccountSid
   });
+  if (errorCode || ["failed", "undelivered"].includes(String(messageStatus || "").toLowerCase())) {
+    alertSeller("twilio_message_delivery_error", {
+      message: req.body?.ErrorMessage || messageStatus,
+      code: errorCode,
+      from: req.body?.From,
+      to: req.body?.To,
+      details: req.body
+    });
+  }
   res.json({ ok: true });
 });
 
@@ -834,14 +913,30 @@ app.post("/openai/realtime/webhook", async (req, res, next) => {
           message: error.message,
           code: error.code
         });
+        alertSeller("openai_sip_accept_error", {
+          message: error.message,
+          code: error.code,
+          callSid: callId
+        });
       });
   } catch (error) {
     next(error);
   }
 });
 
-app.use((error, _req, res, _next) => {
+app.use((error, req, res, _next) => {
   console.error(error);
+  logEvent("express_error", {
+    path: req.path,
+    method: req.method,
+    message: error.message,
+    code: error.code
+  });
+  alertSeller("express_error", {
+    path: req.path,
+    message: error.message,
+    code: error.code
+  });
   res.status(500).json({ error: error.message });
 });
 

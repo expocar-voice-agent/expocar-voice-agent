@@ -33,7 +33,8 @@ export const config = {
     sellerWhatsappTo: process.env.SELLER_WHATSAPP_TO || "whatsapp:+393711938885",
     humanTransferTo: process.env.HUMAN_TRANSFER_PHONE || "+393711938885",
     messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID || "",
-    customerTemplateContentSid: process.env.TWILIO_CUSTOMER_TEMPLATE_CONTENT_SID || ""
+    customerTemplateContentSid: process.env.TWILIO_CUSTOMER_TEMPLATE_CONTENT_SID || "",
+    appointmentTemplateContentSid: process.env.TWILIO_APPOINTMENT_TEMPLATE_CONTENT_SID || ""
   },
   multigestionale: {
     userApi: required("MULTIGESTIONALE_USER_API"),
