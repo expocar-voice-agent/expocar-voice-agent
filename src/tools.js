@@ -1,5 +1,5 @@
 import { searchInventory } from "./inventory.js";
-import { createAppointment, getAvailableSlots } from "./calendar.js";
+import { checkAppointmentSlot, createAppointment, getAvailableSlots } from "./calendar.js";
 import { saveLead } from "./leads.js";
 import { notifySeller, normalizeWhatsappNumber, sendAppointmentWhatsapp } from "./whatsapp.js";
 
@@ -39,7 +39,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "cerca_auto",
-    description: "Cerca auto disponibili nel parco Expocar tramite MultiGestionale.",
+    description: "Cerca auto disponibili nel parco Expocar tramite MultiGestionale. Da usare sempre prima di dire che un'auto non e disponibile.",
     parameters: {
       type: "object",
       properties: {
@@ -57,10 +57,14 @@ export const realtimeTools = [
   {
     type: "function",
     name: "controlla_disponibilita",
-    description: "Trova fino a 3 slot disponibili per appuntamenti in sede.",
+    description: "Verifica uno slot preciso o trova fino a 3 slot disponibili per appuntamenti in sede.",
     parameters: {
       type: "object",
       properties: {
+        requestedStartTime: {
+          type: "string",
+          description: "Orario preciso richiesto dal cliente in formato ISO, per esempio domani alle 18."
+        },
         preferredDate: {
           type: "string",
           description: "Data preferita in formato ISO, se il cliente ne indica una."
@@ -129,11 +133,21 @@ export const realtimeTools = [
 export async function runTool(name, args) {
   if (name === "cerca_auto") {
     const results = await searchInventory(args);
-    return { results };
+    return {
+      results,
+      count: results.length,
+      message: results.length
+        ? "Auto trovate nello stock Expocar. Comunica al cliente i risultati principali."
+        : "Nessun risultato trovato con questi filtri. Non dire che e impossibile: proponi importazione su misura o chiedi una verifica a un consulente."
+    };
   }
 
   if (name === "controlla_disponibilita") {
     try {
+      if (args.requestedStartTime) {
+        const requestedSlot = await checkAppointmentSlot({ startTime: args.requestedStartTime });
+        return { requestedSlot, calendarAvailable: true };
+      }
       const slots = await getAvailableSlots(args);
       return { slots, calendarAvailable: true };
     } catch (error) {

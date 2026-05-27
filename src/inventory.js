@@ -16,6 +16,19 @@ function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
 }
 
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function compactText(value) {
+  return normalizeText(value).replace(/\s+/g, "");
+}
+
 function normalizeAd(raw) {
   return {
     id: firstDefined(raw.id, raw.ID, raw.code, raw.codice),
@@ -60,19 +73,47 @@ function flattenAds(document) {
 
 function matchesText(car, terms) {
   if (!terms.length) return true;
-  const haystack = [
+  const haystack = normalizeText([
     car.brand,
     car.model,
     car.version,
     car.fuel,
     car.gearbox,
-    car.description
+    car.description,
+    car.raw?.title
   ]
     .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+    .join(" "));
+  const compactHaystack = compactText(haystack);
 
-  return terms.every((term) => haystack.includes(term.toLowerCase()));
+  return terms.every((term) => {
+    const normalizedTerm = normalizeText(term);
+    if (!normalizedTerm) return true;
+    return haystack.includes(normalizedTerm) || compactHaystack.includes(compactText(normalizedTerm));
+  });
+}
+
+function scoreText(car, terms) {
+  if (!terms.length) return 1;
+  const haystack = normalizeText([
+    car.brand,
+    car.model,
+    car.version,
+    car.fuel,
+    car.gearbox,
+    car.description,
+    car.raw?.title
+  ].filter(Boolean).join(" "));
+  const compactHaystack = compactText(haystack);
+
+  return terms.reduce((score, term) => {
+    const normalizedTerm = normalizeText(term);
+    if (!normalizedTerm) return score;
+    if (haystack.includes(normalizedTerm) || compactHaystack.includes(compactText(normalizedTerm))) {
+      return score + 1;
+    }
+    return score;
+  }, 0);
 }
 
 function toNumber(value) {
@@ -119,10 +160,20 @@ export async function searchInventory(filters = {}) {
   const maxMileage = toNumber(filters.maxMileage);
   const minYear = toNumber(filters.minYear);
 
-  return cars
+  const filtered = cars
     .filter((car) => matchesText(car, terms))
     .filter((car) => !maxBudget || !toNumber(car.price) || toNumber(car.price) <= maxBudget)
     .filter((car) => !maxMileage || !toNumber(car.mileage) || toNumber(car.mileage) <= maxMileage)
-    .filter((car) => !minYear || !toNumber(car.year) || toNumber(car.year) >= minYear)
-    .slice(0, 6);
+    .filter((car) => !minYear || !toNumber(car.year) || toNumber(car.year) >= minYear);
+
+  const relaxed = filtered.length ? filtered : cars
+    .map((car) => ({ car, score: scoreText(car, terms) }))
+    .filter((item) => item.score > 0)
+    .filter((item) => !maxBudget || !toNumber(item.car.price) || toNumber(item.car.price) <= maxBudget)
+    .filter((item) => !maxMileage || !toNumber(item.car.mileage) || toNumber(item.car.mileage) <= maxMileage)
+    .filter((item) => !minYear || !toNumber(item.car.year) || toNumber(item.car.year) >= minYear)
+    .sort((a, b) => b.score - a.score)
+    .map((item) => item.car);
+
+  return relaxed.slice(0, 8);
 }

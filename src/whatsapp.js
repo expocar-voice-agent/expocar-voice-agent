@@ -51,6 +51,53 @@ export async function sendAppointmentWhatsapp({ to, name, startTime }) {
   return message;
 }
 
+export async function sendCustomerAfterCallWhatsapp({ to }) {
+  const client = getClient();
+  const normalizedTo = normalizeWhatsappNumber(to);
+  if (!client || !config.twilio.whatsappFrom || !normalizedTo) {
+    logEvent("whatsapp_customer_after_call_skipped", {
+      hasClient: Boolean(client),
+      hasFrom: Boolean(config.twilio.whatsappFrom),
+      hasTo: Boolean(normalizedTo)
+    });
+    return { skipped: true };
+  }
+
+  const body = `🏎 ExpoCar Italia🏎
+
+Gentile cliente,
+
+presso la nostra concessionaria ExpoCar Italia è possibile non solo acquistare le auto già disponibili in sede e visibili su www.expocaritalia.com, ma anche ordinare il veicolo desiderato selezionando le migliori opportunità disponibili in tutta Europa.
+
+Il nostro servizio è completamente chiavi in mano e comprende:
+• ricerca personalizzata del veicolo
+• importazione dall’estero
+• trasporto in Italia
+• immatricolazione
+• tagliando completo
+• garanzia 12 mesi
+
+🔎 Come funziona
+
+1️⃣ Il cliente fissa un appuntamento presso la nostra sede.
+2️⃣ In totale trasparenza effettuiamo una ricerca mirata in base alle sue esigenze.
+3️⃣ Durante la consulenza il cliente vede in diretta foto, chilometraggio, caratteristiche e provenienza del veicolo, oltre al prezzo reale di acquisto in Europa.
+4️⃣ Una volta scelto il veicolo, ExpoCar Italia si occupa di tutta l’importazione e consegna il veicolo pronto su strada.
+
+✨ Trattiamo esclusivamente auto di fascia alta e di prestigio, selezionate con attenzione per offrire ai nostri clienti massima sicurezza, trasparenza e qualità.
+
+📍 Per informazioni o per fissare un appuntamento in sede può cliccare qui:
+https://expocaritalia.simplybook.it/v2/#book/service/2`;
+
+  const message = await client.messages.create({
+    from: config.twilio.whatsappFrom,
+    to: normalizedTo,
+    body
+  });
+  logEvent("whatsapp_customer_after_call_sent", { to: normalizedTo, sid: message.sid });
+  return message;
+}
+
 export async function notifySeller({ body }) {
   const client = getClient();
   const to = normalizeWhatsappNumber(config.twilio.sellerWhatsappTo);

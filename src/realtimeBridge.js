@@ -3,6 +3,8 @@ import { config } from "./config.js";
 import { agentInstructions } from "./agentPrompt.js";
 import { logEvent } from "./logger.js";
 import { realtimeTools, runTool } from "./tools.js";
+import { saveLead } from "./leads.js";
+import { notifySeller, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
 
 function safeJsonParse(value, fallback = {}) {
   try {
@@ -12,12 +14,119 @@ function safeJsonParse(value, fallback = {}) {
   }
 }
 
-async function handleRealtimeToolCall(event, openaiWs) {
+function clipText(value, maxLength = 1200) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 3)}...`;
+}
+
+function extractTranscript(event) {
+  return event.transcript
+    || event.item?.transcript
+    || event.item?.content?.map((part) => part.transcript || part.text).filter(Boolean).join(" ")
+    || event.response?.output?.flatMap((item) => item.content || []).map((part) => part.transcript || part.text).filter(Boolean).join(" ")
+    || "";
+}
+
+function appendTranscript(session, speaker, text) {
+  const clean = clipText(text, 500);
+  if (!clean) return;
+  session.transcript.push({ speaker, text: clean });
+  logEvent("call_transcript_piece", {
+    callSid: session.callSid,
+    speaker,
+    text: clean
+  });
+}
+
+function buildCallSummary(session) {
+  const durationSeconds = Math.max(0, Math.round((Date.now() - session.startedAt) / 1000));
+  const transcript = session.transcript
+    .slice(-12)
+    .map((item) => `${item.speaker}: ${item.text}`)
+    .join("\n");
+
+  return [
+    "Riepilogo chiamata Expocar",
+    `Da: ${session.from || "numero non disponibile"}`,
+    `A: ${session.to || "numero Expocar"}`,
+    session.callSid ? `Call SID: ${session.callSid}` : "",
+    `Durata circa: ${durationSeconds} sec`,
+    "",
+    transcript ? `Conversazione:\n${clipText(transcript, 1200)}` : "Conversazione: trascrizione non disponibile.",
+    session.toolCalls.length ? `\nAzioni eseguite: ${session.toolCalls.join(", ")}` : ""
+  ].filter((line) => line !== "").join("\n");
+}
+
+async function sendFinalCallSummary(session) {
+  if (session.summarySent) return;
+  session.summarySent = true;
+  const body = buildCallSummary(session);
+  saveLead({
+    type: "call_summary",
+    callSid: session.callSid,
+    from: session.from,
+    to: session.to,
+    transcript: session.transcript,
+    toolCalls: session.toolCalls
+  });
+
+  try {
+    await notifySeller({ body });
+    logEvent("call_summary_whatsapp_sent", {
+      callSid: session.callSid,
+      from: session.from
+    });
+  } catch (error) {
+    saveLead({
+      type: "call_summary_whatsapp_failed",
+      callSid: session.callSid,
+      from: session.from,
+      error: error.message
+    });
+    logEvent("call_summary_whatsapp_failed", {
+      callSid: session.callSid,
+      error: error.message
+    });
+  }
+
+  try {
+    const customerMessage = await sendCustomerAfterCallWhatsapp({ to: session.from });
+    logEvent("call_customer_after_call_whatsapp_result", {
+      callSid: session.callSid,
+      from: session.from,
+      skipped: Boolean(customerMessage.skipped),
+      sid: customerMessage.sid || null
+    });
+  } catch (error) {
+    saveLead({
+      type: "customer_after_call_whatsapp_failed",
+      callSid: session.callSid,
+      from: session.from,
+      error: error.message
+    });
+    logEvent("customer_after_call_whatsapp_failed", {
+      callSid: session.callSid,
+      from: session.from,
+      error: error.message
+    });
+  }
+}
+
+async function handleRealtimeToolCall(event, openaiWs, session) {
   const { name, call_id: callId } = event.item;
   const args = safeJsonParse(event.item.arguments);
 
   try {
-    const output = await runTool(name, args);
+    logEvent("tool_call_started", { name, args });
+    session?.toolCalls?.push(name);
+    const output = await Promise.race([
+      runTool(name, args),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 12000);
+      })
+    ]);
+    logEvent("tool_call_done", { name });
     openaiWs.send(JSON.stringify({
       type: "conversation.item.create",
       item: {
@@ -27,6 +136,7 @@ async function handleRealtimeToolCall(event, openaiWs) {
       }
     }));
   } catch (error) {
+    logEvent("tool_call_failed", { name, error: error.message });
     openaiWs.send(JSON.stringify({
       type: "conversation.item.create",
       item: {
@@ -37,7 +147,13 @@ async function handleRealtimeToolCall(event, openaiWs) {
     }));
   }
 
-  openaiWs.send(JSON.stringify({ type: "response.create" }));
+  openaiWs.send(JSON.stringify({
+    type: "response.create",
+    response: {
+      output_modalities: ["audio"],
+      instructions: "Rispondi subito al cliente in modo breve. Se lo strumento ha dato errore o e lento, non restare in silenzio: raccogli nome, telefono e preferenza, poi avvisa che un consulente confermera."
+    }
+  }));
 }
 
 function openAIHeaders(extra = {}) {
@@ -114,6 +230,15 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let streamSid;
   let audioDeltaCount = 0;
   let responseInProgress = false;
+  const session = {
+    startedAt: Date.now(),
+    callSid: "",
+    from: "",
+    to: "",
+    transcript: [],
+    toolCalls: [],
+    summarySent: false
+  };
 
   const openaiWs = new WebSocket(
     `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(config.openai.realtimeModel)}`,
@@ -164,7 +289,15 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (message.event === "start") {
       streamSid = message.start?.streamSid;
-      logEvent("twilio_media_start", { streamSid });
+      session.callSid = message.start?.callSid || message.start?.customParameters?.callSid || session.callSid;
+      session.from = message.start?.customParameters?.from || session.from;
+      session.to = message.start?.customParameters?.to || session.to;
+      logEvent("twilio_media_start", {
+        streamSid,
+        callSid: session.callSid,
+        from: session.from,
+        to: session.to
+      });
       return;
     }
 
@@ -177,6 +310,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (message.event === "stop") {
       logEvent("twilio_media_stop", { streamSid });
+      sendFinalCallSummary(session);
       openaiWs.close();
     }
   });
@@ -197,6 +331,23 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "response.created") {
       responseInProgress = true;
+    }
+
+    if (
+      event.type === "conversation.item.input_audio_transcription.completed"
+      || event.type === "input_audio_buffer.transcription.completed"
+    ) {
+      appendTranscript(session, "Cliente", extractTranscript(event));
+      return;
+    }
+
+    if (
+      event.type === "response.audio_transcript.done"
+      || event.type === "response.output_audio_transcript.done"
+      || event.type === "response.output_item.done"
+    ) {
+      const transcript = extractTranscript(event);
+      if (transcript) appendTranscript(session, "Marco", transcript);
     }
 
     if (event.type === "input_audio_buffer.speech_started") {
@@ -241,7 +392,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
 
     if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
-      await handleRealtimeToolCall(event, openaiWs);
+      await handleRealtimeToolCall(event, openaiWs, session);
     }
   });
 
@@ -259,6 +410,9 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     });
   });
 
-  twilioWs.on("close", () => openaiWs.close());
+  twilioWs.on("close", () => {
+    sendFinalCallSummary(session);
+    openaiWs.close();
+  });
   openaiWs.on("close", () => twilioWs.close());
 }

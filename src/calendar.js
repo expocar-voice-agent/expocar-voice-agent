@@ -82,6 +82,31 @@ function slotOverlapsBusy(start, end, busy) {
   });
 }
 
+function validateAppointmentWindow(start) {
+  const end = addMinutes(start, config.business.durationMinutes);
+  const startParts = getRomeParts(start);
+  const endParts = getRomeParts(end);
+  const minStart = addMinutes(new Date(), config.business.minNoticeHours * 60);
+
+  if (!isWeekday(start)) {
+    return { ok: false, reason: "Gli appuntamenti sono disponibili dal lunedi al venerdi." };
+  }
+
+  if (start < minStart) {
+    return { ok: false, reason: `Serve un preavviso minimo di ${config.business.minNoticeHours} ore.` };
+  }
+
+  if (Number(startParts.hour) < config.business.openHour || Number(startParts.minute) !== 0) {
+    return { ok: false, reason: "Gli appuntamenti partono ogni ora dalle 10:00." };
+  }
+
+  if (Number(endParts.hour) > config.business.closeHour) {
+    return { ok: false, reason: "L'ultimo appuntamento utile deve terminare entro le 19:00." };
+  }
+
+  return { ok: true };
+}
+
 function buildCandidateSlots(fromDate, days = 14) {
   const slots = [];
   const minStart = addMinutes(new Date(), config.business.minNoticeHours * 60);
@@ -103,6 +128,41 @@ function buildCandidateSlots(fromDate, days = 14) {
   }
 
   return slots;
+}
+
+export async function checkAppointmentSlot({ startTime }) {
+  const calendar = getCalendarClient();
+  const start = new Date(startTime);
+  if (Number.isNaN(start.getTime())) {
+    return { available: false, reason: "Orario non valido." };
+  }
+
+  const validation = validateAppointmentWindow(start);
+  const end = addMinutes(start, config.business.durationMinutes);
+  if (!validation.ok) {
+    return {
+      available: false,
+      reason: validation.reason,
+      slot: { start: start.toISOString(), end: end.toISOString() }
+    };
+  }
+
+  const freebusy = await calendar.freebusy.query({
+    requestBody: {
+      timeMin: start.toISOString(),
+      timeMax: end.toISOString(),
+      timeZone: config.business.timezone,
+      items: [{ id: config.google.calendarId }]
+    }
+  });
+
+  const busy = freebusy.data.calendars?.[config.google.calendarId]?.busy || [];
+  const available = !slotOverlapsBusy(start, end, busy);
+  return {
+    available,
+    reason: available ? "" : "Lo slot richiesto risulta gia occupato.",
+    slot: { start: start.toISOString(), end: end.toISOString() }
+  };
 }
 
 export async function getAvailableSlots({ preferredDate, days = 14 } = {}) {
@@ -137,6 +197,10 @@ export async function getAvailableSlots({ preferredDate, days = 14 } = {}) {
 export async function createAppointment({ name, phone, interest, startTime, notes }) {
   const calendar = getCalendarClient();
   const start = new Date(startTime);
+  const validation = validateAppointmentWindow(start);
+  if (!validation.ok) {
+    throw new Error(validation.reason);
+  }
   const end = addMinutes(start, config.business.durationMinutes);
 
   const event = await calendar.events.insert({
