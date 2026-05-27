@@ -154,7 +154,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       type: "response.create",
       response: {
         output_modalities: ["audio"],
-        instructions: "Di esattamente: Expocar, buongiorno, sono Marco. In cosa posso esserle utile?"
+        instructions: "Di esattamente, con voce naturale e ritmo spedito: Expocar, buongiorno, sono Marco. In cosa posso esserle utile?"
       }
     }));
   });

@@ -27,7 +27,9 @@ function buildImportSummary(args) {
     args.gearbox ? `Cambio: ${args.gearbox}` : "",
     args.minYear ? `Anno minimo: ${args.minYear}` : "",
     args.maxMileage ? `Km massimi: ${args.maxMileage}` : "",
+    args.color ? `Colore/preferenze: ${args.color}` : "",
     args.tradeIn ? `Permuta: ${args.tradeIn}` : "",
+    args.payment ? `Pagamento: ${args.payment}` : "",
     args.financing ? `Finanziamento: ${args.financing}` : "",
     args.notes ? `Note: ${args.notes}` : ""
   ].filter(Boolean).join("\n");
@@ -102,7 +104,9 @@ export const realtimeTools = [
         gearbox: { type: "string" },
         minYear: { type: "number" },
         maxMileage: { type: "number" },
+        color: { type: "string" },
         tradeIn: { type: "string" },
+        payment: { type: "string" },
         financing: { type: "string" },
         notes: { type: "string" }
       }

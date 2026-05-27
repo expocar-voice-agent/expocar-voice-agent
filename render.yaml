@@ -22,7 +22,7 @@ services:
       - key: OPENAI_REALTIME_MODEL
         value: gpt-realtime-2
       - key: OPENAI_REALTIME_VOICE
-        value: verse
+        value: marin
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN
