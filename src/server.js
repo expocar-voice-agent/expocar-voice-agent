@@ -11,6 +11,7 @@ import { acceptOpenAISipCall, bridgeTwilioToOpenAI, monitorOpenAISipCall } from 
 import { searchInventory } from "./inventory.js";
 import { getAvailableSlots } from "./calendar.js";
 import { readRecentLeads } from "./leads.js";
+import { notifySeller } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
 
 const app = express();
@@ -146,6 +147,36 @@ app.get("/debug/logs", requireAdmin, (_req, res) => {
     res.type("text/plain").send(lines.join("\n"));
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/admin/test-whatsapp", requireAdmin, async (req, res) => {
+  try {
+    const body = req.body?.body || `Test WhatsApp Expocar: sistema notifiche attivo ${new Date().toISOString()}`;
+    const message = await notifySeller({ body });
+    res.json({
+      ok: !message.skipped,
+      skipped: Boolean(message.skipped),
+      sid: message.sid || null
+    });
+  } catch (error) {
+    logEvent("admin_test_whatsapp_failed", { error: error.message });
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/admin/test-whatsapp", requireAdmin, async (req, res) => {
+  try {
+    const body = req.query.body || `Test WhatsApp Expocar: sistema notifiche attivo ${new Date().toISOString()}`;
+    const message = await notifySeller({ body });
+    res.json({
+      ok: !message.skipped,
+      skipped: Boolean(message.skipped),
+      sid: message.sid || null
+    });
+  } catch (error) {
+    logEvent("admin_test_whatsapp_failed", { error: error.message });
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 

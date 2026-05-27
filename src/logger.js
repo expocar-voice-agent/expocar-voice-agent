@@ -12,5 +12,6 @@ export function logEvent(type, payload = {}) {
     ...payload
   };
   fs.appendFileSync(logPath, `${JSON.stringify(record)}\n`);
+  console.log(JSON.stringify(record));
   return record;
 }

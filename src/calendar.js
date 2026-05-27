@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { config } from "./config.js";
+import { logEvent } from "./logger.js";
 
 function getCalendarClient() {
   let auth;
@@ -152,10 +153,18 @@ export async function createAppointment({ name, phone, interest, startTime, note
     }
   });
 
-  return {
+  const appointment = {
     id: event.data.id,
     htmlLink: event.data.htmlLink,
     start: start.toISOString(),
     end: end.toISOString()
   };
+  logEvent("calendar_appointment_created", {
+    id: appointment.id,
+    name,
+    phone,
+    start: appointment.start,
+    calendarId: config.google.calendarId
+  });
+  return appointment;
 }

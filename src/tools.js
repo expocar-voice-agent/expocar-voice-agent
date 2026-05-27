@@ -1,7 +1,37 @@
 import { searchInventory } from "./inventory.js";
 import { createAppointment, getAvailableSlots } from "./calendar.js";
 import { saveLead } from "./leads.js";
-import { notifySeller, sendAppointmentWhatsapp } from "./whatsapp.js";
+import { notifySeller, normalizeWhatsappNumber, sendAppointmentWhatsapp } from "./whatsapp.js";
+
+function formatRomeDate(value) {
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function buildImportSummary(args) {
+  return [
+    "Richiesta importazione auto Expocar",
+    `Cliente: ${args.name || "non indicato"}`,
+    `Telefono: ${args.phone || "non indicato"}`,
+    args.request ? `Richiesta: ${args.request}` : "",
+    args.brand || args.model ? `Auto cercata: ${[args.brand, args.model].filter(Boolean).join(" ")}` : "",
+    args.budget ? `Budget: ${args.budget}` : "",
+    args.fuel ? `Alimentazione: ${args.fuel}` : "",
+    args.gearbox ? `Cambio: ${args.gearbox}` : "",
+    args.minYear ? `Anno minimo: ${args.minYear}` : "",
+    args.maxMileage ? `Km massimi: ${args.maxMileage}` : "",
+    args.tradeIn ? `Permuta: ${args.tradeIn}` : "",
+    args.financing ? `Finanziamento: ${args.financing}` : "",
+    args.notes ? `Note: ${args.notes}` : ""
+  ].filter(Boolean).join("\n");
+}
 
 export const realtimeTools = [
   {
@@ -39,7 +69,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "crea_appuntamento",
-    description: "Crea un appuntamento su Google Calendar e invia WhatsApp di conferma.",
+    description: "Crea un appuntamento reale su Google Calendar, invia WhatsApp di conferma al cliente e invia riepilogo WhatsApp al venditore.",
     parameters: {
       type: "object",
       required: ["name", "phone", "interest", "startTime"],
@@ -49,6 +79,31 @@ export const realtimeTools = [
         whatsappTo: { type: "string", description: "Numero WhatsApp cliente in formato whatsapp:+39..." },
         interest: { type: "string" },
         startTime: { type: "string", description: "Orario in formato ISO." },
+        notes: { type: "string" }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "registra_richiesta_importazione",
+    description: "Registra una richiesta di importazione auto dall'Europa e invia subito il riepilogo WhatsApp al venditore.",
+    parameters: {
+      type: "object",
+      required: ["summary"],
+      properties: {
+        name: { type: "string" },
+        phone: { type: "string" },
+        request: { type: "string" },
+        summary: { type: "string", description: "Riassunto chiaro della richiesta cliente." },
+        brand: { type: "string" },
+        model: { type: "string" },
+        budget: { type: "string" },
+        fuel: { type: "string" },
+        gearbox: { type: "string" },
+        minYear: { type: "number" },
+        maxMileage: { type: "number" },
+        tradeIn: { type: "string" },
+        financing: { type: "string" },
         notes: { type: "string" }
       }
     }
@@ -93,34 +148,43 @@ export async function runTool(name, args) {
 
   if (name === "crea_appuntamento") {
     const appointment = await createAppointment(args);
+    const customerWhatsappTo = normalizeWhatsappNumber(args.whatsappTo || args.phone);
     saveLead({
       type: "appointment",
       name: args.name,
       phone: args.phone,
+      whatsappTo: customerWhatsappTo,
       interest: args.interest,
       startTime: args.startTime,
       notes: args.notes,
       appointment
     });
-    if (args.whatsappTo) {
-      try {
-        await sendAppointmentWhatsapp({
-          to: args.whatsappTo,
-          name: args.name,
-          startTime: args.startTime
-        });
-      } catch (error) {
-        saveLead({
-          type: "whatsapp_customer_failed",
-          phone: args.phone,
-          whatsappTo: args.whatsappTo,
-          error: error.message
-        });
-      }
+    try {
+      await sendAppointmentWhatsapp({
+        to: customerWhatsappTo,
+        name: args.name,
+        startTime: args.startTime
+      });
+    } catch (error) {
+      saveLead({
+        type: "whatsapp_customer_failed",
+        phone: args.phone,
+        whatsappTo: customerWhatsappTo,
+        error: error.message
+      });
     }
     try {
       await notifySeller({
-        body: `Nuovo appuntamento Expocar\nCliente: ${args.name}\nTelefono: ${args.phone}\nInteresse: ${args.interest}\nOrario: ${args.startTime}`
+        body: [
+          "Nuovo appuntamento Expocar",
+          `Cliente: ${args.name}`,
+          `Telefono: ${args.phone}`,
+          `WhatsApp cliente: ${customerWhatsappTo || "non disponibile"}`,
+          `Interesse: ${args.interest}`,
+          `Orario: ${formatRomeDate(args.startTime)}`,
+          args.notes ? `Note/richieste: ${args.notes}` : "",
+          appointment.htmlLink ? `Calendario: ${appointment.htmlLink}` : ""
+        ].filter(Boolean).join("\n")
       });
     } catch (error) {
       saveLead({
@@ -129,7 +193,30 @@ export async function runTool(name, args) {
         error: error.message
       });
     }
-    return { appointment };
+    return {
+      appointment,
+      customerWhatsappSentTo: customerWhatsappTo || null,
+      sellerNotified: true
+    };
+  }
+
+  if (name === "registra_richiesta_importazione") {
+    const summary = args.summary || buildImportSummary(args);
+    const lead = saveLead({
+      type: "import_request",
+      ...args,
+      summary
+    });
+    try {
+      await notifySeller({ body: buildImportSummary({ ...args, request: args.request || summary }) });
+    } catch (error) {
+      saveLead({
+        type: "whatsapp_seller_failed",
+        summary,
+        error: error.message
+      });
+    }
+    return { ok: true, lead };
   }
 
   if (name === "avvisa_venditore") {

@@ -9,6 +9,8 @@ services:
         value: production
       - key: PORT
         value: 3000
+      - key: PUBLIC_BASE_URL
+        value: https://expocar-voice-agent-2.onrender.com
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_PROJECT_ID
@@ -21,6 +23,16 @@ services:
         value: gpt-realtime-2
       - key: OPENAI_REALTIME_VOICE
         value: verse
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        value: "+18722595539"
+      - key: TWILIO_WHATSAPP_FROM
+        value: whatsapp:+14155238886
+      - key: SELLER_WHATSAPP_TO
+        value: whatsapp:+393711938885
       - key: BUSINESS_PUBLIC_PHONE
         value: "+390809997271"
       - key: DIDWW_API_KEY
