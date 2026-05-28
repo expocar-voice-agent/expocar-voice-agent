@@ -149,12 +149,12 @@ async function generateCartesiaDemoAudio() {
       model_id: config.cartesia.modelId,
       transcript,
       voice: {
-        id: config.cartesia.voiceId,
-        mode: "id"
+        id: config.cartesia.voiceId
       },
       language: "it",
       output_format: {
         container: "mp3",
+        sample_rate: 44100,
         bit_rate: 64000
       },
       generation_config: {
@@ -174,6 +174,22 @@ async function generateCartesiaDemoAudio() {
     contentType: response.headers.get("content-type") || "audio/mpeg",
     buffer: Buffer.from(await response.arrayBuffer())
   };
+}
+
+function demoAudioPath() {
+  return path.join(process.cwd(), "data", "cartesia-demo.mp3");
+}
+
+async function saveCartesiaDemoAudio() {
+  const audio = await generateCartesiaDemoAudio();
+  fs.mkdirSync(path.dirname(demoAudioPath()), { recursive: true });
+  fs.writeFileSync(demoAudioPath(), audio.buffer);
+  logEvent("cartesia_demo_audio_saved", {
+    contentType: audio.contentType,
+    bytes: audio.buffer.length,
+    voiceId: config.cartesia.voiceId
+  });
+  return audio;
 }
 
 app.get("/admin/status", requireAdmin, async (_req, res) => {
@@ -459,6 +475,8 @@ async function createCartesiaDemoCall({ baseUrl = config.publicBaseUrl, to } = {
     throw new Error("Twilio non configurato.");
   }
 
+  await saveCartesiaDemoAudio();
+
   const destination = to || config.twilio.sellerWhatsappTo.replace(/^whatsapp:/, "");
   const client = twilio(config.twilio.accountSid, config.twilio.authToken);
   const call = await client.calls.create({
@@ -671,6 +689,25 @@ app.get("/admin/cartesia-demo-call", requireAdmin, async (req, res) => {
       ok: false,
       error: error.message,
       code: error.code
+    });
+  }
+});
+
+app.get("/admin/cartesia-demo-audio-check", requireAdmin, async (_req, res) => {
+  try {
+    const audio = await saveCartesiaDemoAudio();
+    res.json({
+      ok: true,
+      voiceId: config.cartesia.voiceId,
+      modelId: config.cartesia.modelId,
+      contentType: audio.contentType,
+      bytes: audio.buffer.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message,
+      status: error.status
     });
   }
 });
@@ -989,19 +1026,14 @@ app.post("/twilio/cartesia-demo", (req, res) => {
 
 app.get("/cartesia/demo-audio.mp3", async (_req, res) => {
   try {
-    if (!config.cartesia.apiKey) {
-      res.status(500).send("CARTESIA_API_KEY mancante.");
-      return;
+    if (!fs.existsSync(demoAudioPath())) {
+      await saveCartesiaDemoAudio();
     }
-
-    const audio = await generateCartesiaDemoAudio();
-    logEvent("cartesia_demo_audio_generated", {
-      contentType: audio.contentType,
-      bytes: audio.buffer.length
-    });
-    res.setHeader("Content-Type", audio.contentType);
+    const audio = fs.readFileSync(demoAudioPath());
+    logEvent("cartesia_demo_audio_served", { bytes: audio.length });
+    res.setHeader("Content-Type", "audio/mpeg");
     res.setHeader("Cache-Control", "no-store");
-    res.send(audio.buffer);
+    res.send(audio);
   } catch (error) {
     logEvent("cartesia_demo_audio_error", {
       message: error.message,
