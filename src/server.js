@@ -15,6 +15,7 @@ import { readRecentLeads } from "./leads.js";
 import { notifySeller, sendAppointmentWhatsapp, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
+import { markCallStatus, markStreamStatus, recentCallLifecycle, registerIncomingCall } from "./callLifecycle.js";
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -283,6 +284,13 @@ app.get("/admin/logs", requireAdmin, (_req, res) => {
   }
 });
 
+app.get("/admin/call-lifecycle", requireAdmin, (req, res) => {
+  res.json({
+    ok: true,
+    calls: recentCallLifecycle(Number(req.query.limit) || 20)
+  });
+});
+
 app.get("/debug/logs", requireAdmin, (_req, res) => {
   try {
     const logPath = "data/server.log";
@@ -476,13 +484,17 @@ async function updateTwilioWebhook(baseUrl = config.publicBaseUrl) {
 
   const updated = await client.incomingPhoneNumbers(numbers[0].sid).update({
     voiceUrl: `${baseUrl}/twilio/voice`,
-    voiceMethod: "POST"
+    voiceMethod: "POST",
+    statusCallback: `${baseUrl}/twilio/status`,
+    statusCallbackMethod: "POST"
   });
 
   return {
     phoneNumber: updated.phoneNumber,
     voiceUrl: updated.voiceUrl,
-    voiceMethod: updated.voiceMethod
+    voiceMethod: updated.voiceMethod,
+    statusCallback: updated.statusCallback,
+    statusCallbackMethod: updated.statusCallbackMethod
   };
 }
 
@@ -1009,6 +1021,7 @@ app.post("/twilio/voice", (req, res) => {
     from: req.body?.From,
     to: req.body?.To
   });
+  registerIncomingCall(req.body || {});
 
   const response = new twilio.twiml.VoiceResponse();
   const connect = response.connect();
@@ -1113,7 +1126,7 @@ app.get("/cartesia/demo-audio.mp3", async (_req, res) => {
   }
 });
 
-app.post("/twilio/status", (req, res) => {
+app.post("/twilio/status", async (req, res) => {
   logEvent("twilio_status", {
     callSid: req.body?.CallSid,
     callStatus: req.body?.CallStatus,
@@ -1121,11 +1134,13 @@ app.post("/twilio/status", (req, res) => {
     from: req.body?.From,
     to: req.body?.To
   });
+  await markCallStatus(req.body || {});
   res.json({ ok: true });
 });
 
 app.post("/twilio/stream-status", (req, res) => {
   logEvent("twilio_stream_status", req.body || {});
+  markStreamStatus(req.body || {});
   res.json({ ok: true });
 });
 
