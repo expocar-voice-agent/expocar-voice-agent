@@ -950,32 +950,6 @@ app.post("/twilio/voice", (req, res) => {
   const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
-  if (req.body?.CallSid && config.twilio.accountSid && config.twilio.authToken) {
-    const client = twilio(config.twilio.accountSid, config.twilio.authToken);
-    client.calls(req.body.CallSid).recordings.create({
-      recordingChannels: "dual",
-      recordingStatusCallback: `${httpBaseUrl}/twilio/recording-status`,
-      recordingStatusCallbackMethod: "POST",
-      recordingStatusCallbackEvent: ["in-progress", "completed", "absent"]
-    }).then((recording) => {
-      logEvent("twilio_recording_started", {
-        callSid: req.body?.CallSid,
-        recordingSid: recording.sid
-      });
-    }).catch((error) => {
-      logEvent("twilio_recording_start_failed", {
-        callSid: req.body?.CallSid,
-        error: error.message,
-        code: error.code
-      });
-      alertSeller("twilio_recording_start_failed", {
-        message: error.message,
-        code: error.code,
-        callSid: req.body?.CallSid,
-        from: req.body?.From
-      });
-    });
-  }
   const stream = connect.stream({
     url: `${wsUrl}/twilio/media`,
     statusCallback: `${httpBaseUrl}/twilio/stream-status`,
@@ -985,7 +959,41 @@ app.post("/twilio/voice", (req, res) => {
   stream.parameter({ name: "from", value: req.body?.From || "" });
   stream.parameter({ name: "to", value: req.body?.To || "" });
 
-  res.type("text/xml").send(response.toString());
+  const twiml = response.toString();
+  logEvent("twilio_voice_twiml_generated", {
+    callSid: req.body?.CallSid,
+    streamUrl: `${wsUrl}/twilio/media`
+  });
+  res.type("text/xml").send(twiml);
+
+  if (req.body?.CallSid && config.twilio.accountSid && config.twilio.authToken) {
+    setTimeout(() => {
+      const client = twilio(config.twilio.accountSid, config.twilio.authToken);
+      client.calls(req.body.CallSid).recordings.create({
+        recordingChannels: "dual",
+        recordingStatusCallback: `${httpBaseUrl}/twilio/recording-status`,
+        recordingStatusCallbackMethod: "POST",
+        recordingStatusCallbackEvent: ["in-progress", "completed", "absent"]
+      }).then((recording) => {
+        logEvent("twilio_recording_started", {
+          callSid: req.body?.CallSid,
+          recordingSid: recording.sid
+        });
+      }).catch((error) => {
+        logEvent("twilio_recording_start_failed", {
+          callSid: req.body?.CallSid,
+          error: error.message,
+          code: error.code
+        });
+        alertSeller("twilio_recording_start_failed", {
+          message: error.message,
+          code: error.code,
+          callSid: req.body?.CallSid,
+          from: req.body?.From
+        });
+      });
+    }, 4000);
+  }
 });
 
 app.post("/twilio/voice-greeting", (req, res) => {

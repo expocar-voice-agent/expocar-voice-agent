@@ -240,6 +240,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let silenceTimer;
   let openaiOpened = false;
   let openaiRetries = 0;
+  let twilioMessageCount = 0;
   const queuedAudio = [];
   const session = {
     startedAt: Date.now(),
@@ -481,7 +482,15 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   twilioWs.on("message", (raw) => {
+    twilioMessageCount += 1;
     const message = safeJsonParse(raw);
+    if (twilioMessageCount <= 3) {
+      logEvent("twilio_media_message", {
+        count: twilioMessageCount,
+        event: message.event || "",
+        bytes: raw?.length || 0
+      });
+    }
 
     if (message.event === "start") {
       streamSid = message.start?.streamSid;
@@ -531,7 +540,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       callSid: session.callSid,
       from: session.from,
       code,
-      reason: reason?.toString?.() || ""
+      reason: reason?.toString?.() || "",
+      messageCount: twilioMessageCount
     });
     sendFinalCallSummary(session);
     if (openaiWs && [WebSocket.CONNECTING, WebSocket.OPEN].includes(openaiWs.readyState)) {
