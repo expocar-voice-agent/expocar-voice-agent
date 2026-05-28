@@ -136,6 +136,37 @@ function verifyRecordingAccess(req, recordingSid) {
   return tokenBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
 }
 
+function startCallRecordingAfterResponse({ callSid, from, httpBaseUrl }) {
+  if (!callSid || !config.twilio.accountSid || !config.twilio.authToken) return;
+
+  setTimeout(() => {
+    const client = twilio(config.twilio.accountSid, config.twilio.authToken);
+    client.calls(callSid).recordings.create({
+      recordingChannels: "dual",
+      recordingStatusCallback: `${httpBaseUrl}/twilio/recording-status`,
+      recordingStatusCallbackMethod: "POST",
+      recordingStatusCallbackEvent: ["in-progress", "completed", "absent"]
+    }).then((recording) => {
+      logEvent("twilio_recording_started", {
+        callSid,
+        recordingSid: recording.sid
+      });
+    }).catch((error) => {
+      logEvent("twilio_recording_start_failed", {
+        callSid,
+        error: error.message,
+        code: error.code
+      });
+      alertSeller("twilio_recording_start_failed", {
+        message: error.message,
+        code: error.code,
+        callSid,
+        from
+      });
+    });
+  }, 1500);
+}
+
 async function generateCartesiaDemoAudio(options = {}) {
   const transcript = options.text || config.cartesia.demoText || "Buongiorno, Expocar Italia, sono Marco. Non si preoccupi, penso a tutto io. Mi dica pure che auto sta cercando e la aiuto subito a trovare la soluzione migliore.";
   const modelId = options.modelId || config.cartesia.modelId;
@@ -1043,32 +1074,6 @@ app.post("/twilio/voice", (req, res) => {
   const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
-  if (req.body?.CallSid && config.twilio.accountSid && config.twilio.authToken) {
-    const client = twilio(config.twilio.accountSid, config.twilio.authToken);
-    client.calls(req.body.CallSid).recordings.create({
-      recordingChannels: "dual",
-      recordingStatusCallback: `${httpBaseUrl}/twilio/recording-status`,
-      recordingStatusCallbackMethod: "POST",
-      recordingStatusCallbackEvent: ["in-progress", "completed", "absent"]
-    }).then((recording) => {
-      logEvent("twilio_recording_started", {
-        callSid: req.body?.CallSid,
-        recordingSid: recording.sid
-      });
-    }).catch((error) => {
-      logEvent("twilio_recording_start_failed", {
-        callSid: req.body?.CallSid,
-        error: error.message,
-        code: error.code
-      });
-      alertSeller("twilio_recording_start_failed", {
-        message: error.message,
-        code: error.code,
-        callSid: req.body?.CallSid,
-        from: req.body?.From
-      });
-    });
-  }
   const stream = connect.stream({
     url: `${wsUrl}/twilio/media`,
     statusCallback: `${httpBaseUrl}/twilio/stream-status`,
@@ -1078,7 +1083,18 @@ app.post("/twilio/voice", (req, res) => {
   stream.parameter({ name: "from", value: req.body?.From || "" });
   stream.parameter({ name: "to", value: req.body?.To || "" });
 
-  res.type("text/xml").send(response.toString());
+  const twiml = response.toString();
+  logEvent("twilio_voice_twiml_generated", {
+    callSid: req.body?.CallSid,
+    streamUrl: `${wsUrl}/twilio/media`
+  });
+  res.type("text/xml").send(twiml);
+
+  startCallRecordingAfterResponse({
+    callSid: req.body?.CallSid,
+    from: req.body?.From,
+    httpBaseUrl
+  });
 });
 
 app.post("/twilio/voice-greeting", (req, res) => {
