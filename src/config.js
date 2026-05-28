@@ -28,7 +28,7 @@ export const config = {
   },
   cartesia: {
     apiKey: process.env.CARTESIA_API_KEY || "",
-    modelId: process.env.CARTESIA_MODEL_ID || "sonic-3",
+    modelId: process.env.CARTESIA_MODEL_ID || "sonic-3-latest",
     voiceId: process.env.CARTESIA_VOICE_ID || "408daed0-c597-4c27-aae8-fa0497d644bf",
     version: process.env.CARTESIA_VERSION || "2026-03-01",
     demoText: process.env.CARTESIA_DEMO_TEXT || ""

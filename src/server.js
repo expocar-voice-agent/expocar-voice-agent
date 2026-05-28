@@ -135,8 +135,10 @@ function verifyRecordingAccess(req, recordingSid) {
   return tokenBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
 }
 
-async function generateCartesiaDemoAudio() {
-  const transcript = config.cartesia.demoText || "Buongiorno, Expocar Italia, sono Marco. Non si preoccupi, penso a tutto io. Mi dica pure che auto sta cercando e la aiuto subito a trovare la soluzione migliore.";
+async function generateCartesiaDemoAudio(options = {}) {
+  const transcript = options.text || config.cartesia.demoText || "Buongiorno, Expocar Italia, sono Marco. Non si preoccupi, penso a tutto io. Mi dica pure che auto sta cercando e la aiuto subito a trovare la soluzione migliore.";
+  const modelId = options.modelId || config.cartesia.modelId;
+  const voiceId = options.voiceId || config.cartesia.voiceId;
   const response = await fetch("https://api.cartesia.ai/tts/bytes", {
     method: "POST",
     headers: {
@@ -146,19 +148,16 @@ async function generateCartesiaDemoAudio() {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model_id: config.cartesia.modelId,
+      model_id: modelId,
       transcript,
       voice: {
-        id: config.cartesia.voiceId
+        id: voiceId
       },
       language: "it",
       output_format: {
         container: "mp3",
         sample_rate: 44100,
         bit_rate: 64000
-      },
-      generation_config: {
-        speed: 1.12
       }
     })
   });
@@ -180,16 +179,56 @@ function demoAudioPath() {
   return path.join(process.cwd(), "data", "cartesia-demo.mp3");
 }
 
-async function saveCartesiaDemoAudio() {
-  const audio = await generateCartesiaDemoAudio();
+async function saveCartesiaDemoAudio(options = {}) {
+  const audio = await generateCartesiaDemoAudio(options);
   fs.mkdirSync(path.dirname(demoAudioPath()), { recursive: true });
   fs.writeFileSync(demoAudioPath(), audio.buffer);
   logEvent("cartesia_demo_audio_saved", {
     contentType: audio.contentType,
     bytes: audio.buffer.length,
-    voiceId: config.cartesia.voiceId
+    modelId: options.modelId || config.cartesia.modelId,
+    voiceId: options.voiceId || config.cartesia.voiceId
   });
   return audio;
+}
+
+async function listCartesiaVoices({ language = "it", limit = 50 } = {}) {
+  const url = new URL("https://api.cartesia.ai/voices");
+  if (language) url.searchParams.set("language", language);
+  url.searchParams.set("limit", String(limit));
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${config.cartesia.apiKey}`,
+      "X-API-Key": config.cartesia.apiKey,
+      "Cartesia-Version": config.cartesia.version
+    }
+  });
+
+  const text = await response.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = text;
+  }
+
+  if (!response.ok) {
+    const error = new Error(`Cartesia voices failed ${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  const voices = Array.isArray(body) ? body : (body.voices || body.data || []);
+  return voices.map((voice) => ({
+    id: voice.id,
+    name: voice.name,
+    description: voice.description,
+    language: voice.language || voice.languages,
+    gender: voice.gender,
+    isOwner: voice.is_owner,
+    isPublic: voice.is_public
+  }));
 }
 
 app.get("/admin/status", requireAdmin, async (_req, res) => {
@@ -467,7 +506,7 @@ async function createTestCall(baseUrl = config.publicBaseUrl) {
   };
 }
 
-async function createCartesiaDemoCall({ baseUrl = config.publicBaseUrl, to } = {}) {
+async function createCartesiaDemoCall({ baseUrl = config.publicBaseUrl, to, modelId, voiceId, text } = {}) {
   if (!config.cartesia.apiKey) {
     throw new Error("Manca CARTESIA_API_KEY su Render.");
   }
@@ -475,7 +514,7 @@ async function createCartesiaDemoCall({ baseUrl = config.publicBaseUrl, to } = {
     throw new Error("Twilio non configurato.");
   }
 
-  await saveCartesiaDemoAudio();
+  await saveCartesiaDemoAudio({ modelId, voiceId, text });
 
   const destination = to || config.twilio.sellerWhatsappTo.replace(/^whatsapp:/, "");
   const client = twilio(config.twilio.accountSid, config.twilio.authToken);
@@ -680,7 +719,10 @@ app.get("/admin/cartesia-demo-call", requireAdmin, async (req, res) => {
   try {
     const call = await createCartesiaDemoCall({
       baseUrl: req.query.baseUrl || config.publicBaseUrl,
-      to: req.query.to
+      to: req.query.to,
+      modelId: req.query.modelId,
+      voiceId: req.query.voiceId,
+      text: req.query.text
     });
     logEvent("cartesia_demo_call_created", call);
     res.json({ ok: true, call });
@@ -693,15 +735,39 @@ app.get("/admin/cartesia-demo-call", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/admin/cartesia-demo-audio-check", requireAdmin, async (_req, res) => {
+app.get("/admin/cartesia-demo-audio-check", requireAdmin, async (req, res) => {
   try {
-    const audio = await saveCartesiaDemoAudio();
+    const audio = await saveCartesiaDemoAudio({
+      modelId: req.query.modelId,
+      voiceId: req.query.voiceId,
+      text: req.query.text
+    });
     res.json({
       ok: true,
-      voiceId: config.cartesia.voiceId,
-      modelId: config.cartesia.modelId,
+      voiceId: req.query.voiceId || config.cartesia.voiceId,
+      modelId: req.query.modelId || config.cartesia.modelId,
       contentType: audio.contentType,
       bytes: audio.buffer.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message,
+      status: error.status
+    });
+  }
+});
+
+app.get("/admin/cartesia-voices", requireAdmin, async (req, res) => {
+  try {
+    const voices = await listCartesiaVoices({
+      language: req.query.language || "it",
+      limit: req.query.limit || 50
+    });
+    res.json({
+      ok: true,
+      count: voices.length,
+      voices
     });
   } catch (error) {
     res.status(500).json({
