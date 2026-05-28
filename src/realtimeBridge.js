@@ -52,79 +52,27 @@ function greetingForRome() {
   return "Buonasera";
 }
 
-function fallbackCallSummary(session) {
+function buildLeadWhatsapp(session) {
   const durationSeconds = Math.max(0, Math.round((Date.now() - session.startedAt) / 1000));
-  const transcript = session.transcript
-    .slice(-20)
+  const customerText = session.transcript
+    .filter((item) => item.speaker === "Cliente")
+    .map((item) => item.text)
+    .join(" ");
+  const recentConversation = session.transcript
+    .slice(-8)
     .map((item) => `${item.speaker}: ${item.text}`)
     .join("\n");
 
   return [
-    "Riepilogo chiamata Expocar",
-    `Da: ${session.from || "numero non disponibile"}`,
-    `A: ${session.to || "numero Expocar"}`,
+    "Lead telefonico ExpoCar",
+    `Cliente: ${session.from || "numero non disponibile"}`,
     session.callSid ? `Call SID: ${session.callSid}` : "",
     `Durata circa: ${durationSeconds} sec`,
+    session.toolCalls.length ? `Azioni: ${session.toolCalls.join(", ")}` : "",
     "",
-    transcript ? `Sintesi provvisoria:\n${clipText(transcript, 1200)}` : "Sintesi: trascrizione non disponibile.",
-    session.toolCalls.length ? `\nAzioni eseguite: ${session.toolCalls.join(", ")}` : ""
+    customerText ? `Informazioni cliente:\n${clipText(customerText, 900)}` : "Informazioni cliente: non rilevate in trascrizione.",
+    recentConversation ? `\nUltimi scambi:\n${clipText(recentConversation, 900)}` : ""
   ].filter((line) => line !== "").join("\n");
-}
-
-async function buildCallSummary(session) {
-  const fallback = fallbackCallSummary(session);
-  const transcript = session.transcript
-    .map((item) => `${item.speaker}: ${item.text}`)
-    .join("\n");
-
-  if (!transcript || !config.openai.apiKey) return fallback;
-
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.openai.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: config.openai.summaryModel,
-        temperature: 0.2,
-        messages: [
-          {
-            role: "system",
-            content: "Sei un assistente operativo per ExpoCar Italia. Crea un unico riepilogo WhatsApp professionale, concreto e utile per il venditore. Non riportare la trascrizione parola per parola: sintetizza davvero. Scrivi in italiano."
-          },
-          {
-            role: "user",
-            content: [
-              `Numero cliente: ${session.from || "non disponibile"}`,
-              `Numero chiamato: ${session.to || "numero Expocar"}`,
-              session.callSid ? `Call SID: ${session.callSid}` : "",
-              "",
-              "Trascrizione:",
-              transcript,
-              "",
-              "Formato richiesto:",
-              "Riepilogo chiamata ExpoCar",
-              "Cliente: numero e nome se presente",
-              "Richiesta principale: cosa vuole il cliente in 1-2 frasi",
-              "Auto o prodotto citato: marca, modello, budget, permuta, finanziamento/leasing, importazione o Sea Next se presenti",
-              "Appuntamento: data/ora richiesta o fissata, oppure specifica che non e stato fissato",
-              "Da fare: prossimo passo pratico per il venditore",
-              "Informazioni mancanti: solo quelle davvero utili da chiedere al cliente"
-            ].filter(Boolean).join("\n")
-          }
-        ]
-      })
-    });
-
-    if (!response.ok) return fallback;
-    const data = await response.json();
-    const summary = data.choices?.[0]?.message?.content?.trim();
-    return summary || fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 async function sendFinalCallSummary(session) {
@@ -140,25 +88,20 @@ async function sendFinalCallSummary(session) {
   });
 
   try {
-    const body = await Promise.race([
-      buildCallSummary(session),
-      new Promise((resolve) => {
-        setTimeout(() => resolve(fallbackCallSummary(session)), 6000);
-      })
-    ]);
+    const body = buildLeadWhatsapp(session);
     await notifySeller({ body });
-    logEvent("call_summary_whatsapp_sent", {
+    logEvent("call_lead_whatsapp_sent", {
       callSid: session.callSid,
       from: session.from
     });
   } catch (error) {
     saveLead({
-      type: "call_summary_whatsapp_failed",
+      type: "call_lead_whatsapp_failed",
       callSid: session.callSid,
       from: session.from,
       error: error.message
     });
-    logEvent("call_summary_whatsapp_failed", {
+    logEvent("call_lead_whatsapp_failed", {
       callSid: session.callSid,
       error: error.message
     });
@@ -201,7 +144,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
         to: session?.to
       }),
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 3200);
+        setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 2400);
       })
     ]);
     logEvent("tool_call_done", { name });

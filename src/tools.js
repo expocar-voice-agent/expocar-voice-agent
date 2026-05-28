@@ -238,14 +238,14 @@ export async function runTool(name, args, context = {}) {
             localDate: args.localDate,
             localTime: args.localTime
           }),
-          2500,
+          1800,
           "Google Calendar non ha risposto in tempo."
         );
         return { requestedSlot, calendarAvailable: true };
       }
       const slots = await withTimeout(
         getAvailableSlots(args),
-        2500,
+        1800,
         "Google Calendar non ha risposto in tempo."
       );
       return { slots, calendarAvailable: true };
@@ -280,7 +280,7 @@ export async function runTool(name, args, context = {}) {
     try {
       appointment = await withTimeout(
         createAppointment(args),
-        3500,
+        2800,
         "Google Calendar non ha creato l'appuntamento in tempo."
       );
     } catch (error) {

@@ -7,6 +7,11 @@ const parser = new XMLParser({
   textNodeName: "text"
 });
 
+const inventoryCache = {
+  expiresAt: 0,
+  cars: null
+};
+
 function asArray(value) {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
@@ -123,6 +128,10 @@ function toNumber(value) {
 }
 
 export async function fetchInventory() {
+  if (inventoryCache.cars && Date.now() < inventoryCache.expiresAt) {
+    return inventoryCache.cars;
+  }
+
   const url = new URL("https://motori.multigestionale.com/api/");
   url.searchParams.set("cc", config.multigestionale.userApi);
   url.searchParams.set("engine", config.multigestionale.engine);
@@ -138,11 +147,15 @@ export async function fetchInventory() {
   const trimmed = xml.trim();
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     const json = JSON.parse(trimmed);
-    return asArray(json).map(normalizeAd);
+    inventoryCache.cars = asArray(json).map(normalizeAd);
+    inventoryCache.expiresAt = Date.now() + 3 * 60 * 1000;
+    return inventoryCache.cars;
   }
 
   const document = parser.parse(trimmed);
-  return flattenAds(document).map(normalizeAd);
+  inventoryCache.cars = flattenAds(document).map(normalizeAd);
+  inventoryCache.expiresAt = Date.now() + 3 * 60 * 1000;
+  return inventoryCache.cars;
 }
 
 function filterInventory(cars, filters = {}) {
