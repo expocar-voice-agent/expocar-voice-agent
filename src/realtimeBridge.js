@@ -66,7 +66,7 @@ function fallbackCallSummary(session) {
     session.callSid ? `Call SID: ${session.callSid}` : "",
     `Durata circa: ${durationSeconds} sec`,
     "",
-    transcript ? `Conversazione:\n${clipText(transcript, 1100)}` : "Conversazione: trascrizione non disponibile.",
+    transcript ? `Sintesi provvisoria:\n${clipText(transcript, 1200)}` : "Sintesi: trascrizione non disponibile.",
     session.toolCalls.length ? `\nAzioni eseguite: ${session.toolCalls.join(", ")}` : ""
   ].filter((line) => line !== "").join("\n");
 }
@@ -92,7 +92,7 @@ async function buildCallSummary(session) {
         messages: [
           {
             role: "system",
-            content: "Sei un assistente operativo per una concessionaria. Crea un riepilogo WhatsApp breve, chiaro e utile per il venditore. Scrivi in italiano."
+            content: "Sei un assistente operativo per ExpoCar Italia. Crea un unico riepilogo WhatsApp professionale, concreto e utile per il venditore. Non riportare la trascrizione parola per parola: sintetizza davvero. Scrivi in italiano."
           },
           {
             role: "user",
@@ -105,14 +105,13 @@ async function buildCallSummary(session) {
               transcript,
               "",
               "Formato richiesto:",
-              "Riepilogo chiamata Expocar",
-              "Cliente/telefono",
-              "Richiesta principale",
-              "Auto/prodotto citato",
-              "Budget, permuta, finanziamento/leasing se presenti",
-              "Appuntamento o azioni richieste",
-              "Prossimo passo consigliato",
-              "Nota se mancano informazioni importanti"
+              "Riepilogo chiamata ExpoCar",
+              "Cliente: numero e nome se presente",
+              "Richiesta principale: cosa vuole il cliente in 1-2 frasi",
+              "Auto o prodotto citato: marca, modello, budget, permuta, finanziamento/leasing, importazione o Sea Next se presenti",
+              "Appuntamento: data/ora richiesta o fissata, oppure specifica che non e stato fissato",
+              "Da fare: prossimo passo pratico per il venditore",
+              "Informazioni mancanti: solo quelle davvero utili da chiedere al cliente"
             ].filter(Boolean).join("\n")
           }
         ]
@@ -131,7 +130,6 @@ async function buildCallSummary(session) {
 async function sendFinalCallSummary(session) {
   if (session.summarySent) return;
   session.summarySent = true;
-  const body = fallbackCallSummary(session);
   saveLead({
     type: "call_summary",
     callSid: session.callSid,
@@ -142,6 +140,12 @@ async function sendFinalCallSummary(session) {
   });
 
   try {
+    const body = await Promise.race([
+      buildCallSummary(session),
+      new Promise((resolve) => {
+        setTimeout(() => resolve(fallbackCallSummary(session)), 6000);
+      })
+    ]);
     await notifySeller({ body });
     logEvent("call_summary_whatsapp_sent", {
       callSid: session.callSid,
@@ -159,22 +163,6 @@ async function sendFinalCallSummary(session) {
       error: error.message
     });
   }
-
-  buildCallSummary(session)
-    .then(async (smartBody) => {
-      if (!smartBody || smartBody === body) return;
-      await notifySeller({ body: `Riepilogo dettagliato Expocar\n\n${smartBody}` });
-      logEvent("call_summary_smart_whatsapp_sent", {
-        callSid: session.callSid,
-        from: session.from
-      });
-    })
-    .catch((error) => {
-      logEvent("call_summary_smart_whatsapp_failed", {
-        callSid: session.callSid,
-        error: error.message
-      });
-    });
 
   try {
     const customerMessage = await sendCustomerAfterCallWhatsapp({ to: session.from });
@@ -326,6 +314,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let streamSid;
   let audioDeltaCount = 0;
   let responseInProgress = false;
+  let waitingForCustomer = false;
   let lastAssistantAudioAt = Date.now();
   let silenceTimer;
   const session = {
@@ -360,13 +349,17 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
       const idleMs = Date.now() - lastAssistantAudioAt;
-      if (idleMs < 2200 || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
+      const waitMs = waitingForCustomer ? 7000 : 2200;
+      if (idleMs < waitMs || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
         resetSilenceTimer();
         return;
       }
       logEvent("anti_silence_prompt", { callSid: session.callSid, idleMs });
-      sendQuickAudio("Di una frase brevissima e naturale per evitare silenzio: Ci sono, sto verificando.");
+      sendQuickAudio(waitingForCustomer
+        ? "Il cliente e rimasto in silenzio. Di in modo naturale: E ancora in linea? Mi dica pure, sono qui."
+        : "Di una frase brevissima e naturale per evitare silenzio: Ci sono, sto verificando.");
       lastAssistantAudioAt = Date.now();
+      waitingForCustomer = true;
       resetSilenceTimer();
     }, 2200);
   }
@@ -472,6 +465,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "response.created") {
       responseInProgress = true;
+      waitingForCustomer = false;
       resetSilenceTimer();
     }
 
@@ -494,6 +488,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "input_audio_buffer.speech_started") {
       logEvent("openai_speech_started", { responseInProgress });
+      waitingForCustomer = false;
       if (responseInProgress && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(JSON.stringify({ type: "response.cancel" }));
       }
@@ -528,6 +523,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "response.done") {
       responseInProgress = false;
+      waitingForCustomer = true;
       resetSilenceTimer();
       logEvent("openai_response_done", {
         status: event.response?.status,

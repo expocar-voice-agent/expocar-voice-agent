@@ -16,6 +16,7 @@ import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
 
 const app = express();
+const recordingCalls = new Map();
 
 function greetingForRome() {
   const hour = Number(new Intl.DateTimeFormat("it-IT", {
@@ -750,6 +751,28 @@ function getOAuthClient(req) {
   );
 }
 
+function publicBaseFromRequest(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0];
+  const proto = forwardedProto || (req.get("host")?.includes("trycloudflare.com") ? "https" : req.protocol);
+  return `${proto}://${req.get("host")}`;
+}
+
+function recordingUrl(recordingSid, req) {
+  const baseUrl = config.publicBaseUrl || publicBaseFromRequest(req);
+  return `${baseUrl}/recordings/${encodeURIComponent(recordingSid)}.mp3`;
+}
+
+async function startCallRecording({ callSid, from, to, baseUrl }) {
+  if (!callSid || !config.twilio.accountSid || !config.twilio.authToken) return;
+  const client = twilio(config.twilio.accountSid, config.twilio.authToken);
+  const recording = await client.calls(callSid).recordings.create({
+    recordingStatusCallback: `${baseUrl}/twilio/recording-status`,
+    recordingStatusCallbackMethod: "POST"
+  });
+  recordingCalls.set(callSid, { from, to, recordingSid: recording.sid });
+  logEvent("twilio_recording_started", { callSid, recordingSid: recording.sid });
+}
+
 function upsertEnvValue(key, value) {
   const envPath = path.join(process.cwd(), ".env");
   const escaped = String(value).replace(/\r?\n/g, "\\n");
@@ -798,27 +821,48 @@ app.get("/google/oauth/callback", async (req, res, next) => {
 });
 
 app.post("/twilio/voice", (req, res) => {
+  const callSid = req.body?.CallSid || "";
+  const from = req.body?.From || "";
+  const to = req.body?.To || "";
   logEvent("twilio_voice_webhook", {
-    callSid: req.body?.CallSid,
-    from: req.body?.From,
-    to: req.body?.To
+    callSid,
+    from,
+    to
   });
 
   const response = new twilio.twiml.VoiceResponse();
   const connect = response.connect();
-  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0];
-  const proto = forwardedProto || (req.get("host")?.includes("trycloudflare.com") ? "https" : req.protocol);
+  const httpBaseUrl = publicBaseFromRequest(req);
+  const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
-  const httpBaseUrl = `${proto}://${req.get("host")}`;
   const stream = connect.stream({
     url: `${wsUrl}/twilio/media`,
     statusCallback: `${httpBaseUrl}/twilio/stream-status`,
     statusCallbackMethod: "POST"
   });
-  stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
-  stream.parameter({ name: "from", value: req.body?.From || "" });
-  stream.parameter({ name: "to", value: req.body?.To || "" });
+  stream.parameter({ name: "callSid", value: callSid });
+  stream.parameter({ name: "from", value: from });
+  stream.parameter({ name: "to", value: to });
+
+  if (callSid) {
+    recordingCalls.set(callSid, { from, to });
+    setTimeout(() => {
+      startCallRecording({ callSid, from, to, baseUrl: httpBaseUrl }).catch((error) => {
+        logEvent("twilio_recording_start_failed", {
+          callSid,
+          error: error.message,
+          code: error.code
+        });
+        alertSeller("twilio_recording_start_failed", {
+          message: error.message,
+          code: error.code,
+          callSid,
+          from
+        });
+      });
+    }, 1200);
+  }
 
   res.type("text/xml").send(response.toString());
 });
@@ -883,6 +927,72 @@ app.post("/twilio/message-status", (req, res) => {
     });
   }
   res.json({ ok: true });
+});
+
+app.post("/twilio/recording-status", async (req, res) => {
+  const callSid = req.body?.CallSid || "";
+  const recordingSid = req.body?.RecordingSid || "";
+  const recordingStatus = req.body?.RecordingStatus || "";
+  const callInfo = recordingCalls.get(callSid) || {};
+  logEvent("twilio_recording_status", {
+    callSid,
+    recordingSid,
+    recordingStatus,
+    recordingDuration: req.body?.RecordingDuration
+  });
+
+  if (recordingSid && recordingStatus === "completed") {
+    recordingCalls.set(callSid, { ...callInfo, recordingSid });
+    try {
+      await notifySeller({
+        body: [
+          "Registrazione chiamata ExpoCar",
+          callInfo.from ? `Cliente: ${callInfo.from}` : "",
+          callSid ? `Call SID: ${callSid}` : "",
+          req.body?.RecordingDuration ? `Durata registrazione: ${req.body.RecordingDuration} sec` : "",
+          "",
+          `Ascolta qui: ${recordingUrl(recordingSid, req)}`
+        ].filter(Boolean).join("\n")
+      });
+      logEvent("twilio_recording_whatsapp_sent", { callSid, recordingSid });
+    } catch (error) {
+      logEvent("twilio_recording_whatsapp_failed", {
+        callSid,
+        recordingSid,
+        error: error.message
+      });
+    }
+  }
+
+  res.json({ ok: true });
+});
+
+app.get("/recordings/:recordingSid.mp3", async (req, res, next) => {
+  try {
+    if (!config.twilio.accountSid || !config.twilio.authToken) {
+      res.status(503).send("Registrazioni non configurate.");
+      return;
+    }
+
+    const recordingSid = req.params.recordingSid;
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(config.twilio.accountSid)}/Recordings/${encodeURIComponent(recordingSid)}.mp3`;
+    const auth = Buffer.from(`${config.twilio.accountSid}:${config.twilio.authToken}`).toString("base64");
+    const response = await fetch(url, {
+      headers: { Authorization: `Basic ${auth}` }
+    });
+
+    if (!response.ok) {
+      res.status(response.status).send("Registrazione non disponibile.");
+      return;
+    }
+
+    const audio = Buffer.from(await response.arrayBuffer());
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.send(audio);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/openai/realtime/webhook", async (req, res, next) => {
