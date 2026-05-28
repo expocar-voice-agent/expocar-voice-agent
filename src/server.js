@@ -20,6 +20,7 @@ import { markCallStatus, markStreamStatus, recentCallLifecycle, registerIncoming
 
 const app = express();
 const voiceConversations = new Map();
+const BUILD_VERSION = "2026-05-28-turn-based-gather";
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -57,6 +58,16 @@ process.on("unhandledRejection", (reason) => {
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/admin/version", requireAdmin, (_req, res) => {
+  res.json({
+    ok: true,
+    buildVersion: BUILD_VERSION,
+    voiceMode: "turn_based_gather",
+    cartesiaVoiceId: config.cartesia.voiceId,
+    realtimeModel: config.openai.realtimeModel
+  });
 });
 
 function requireAdmin(req, res, next) {
