@@ -32,7 +32,7 @@ services:
       - key: CARTESIA_MODEL_ID
         value: sonic-3-latest
       - key: CARTESIA_VOICE_ID
-        value: 029c3c7a-b6d9-44f0-814b-200d849830ff
+        value: 79693aee-1207-4771-a01e-20c393c89e6f
       - key: CARTESIA_VERSION
         value: 2026-03-01
       - key: CARTESIA_DEMO_TEXT

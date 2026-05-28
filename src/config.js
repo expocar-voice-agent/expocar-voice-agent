@@ -29,7 +29,7 @@ export const config = {
   cartesia: {
     apiKey: process.env.CARTESIA_API_KEY || "",
     modelId: process.env.CARTESIA_MODEL_ID || "sonic-3-latest",
-    voiceId: process.env.CARTESIA_VOICE_ID || "029c3c7a-b6d9-44f0-814b-200d849830ff",
+    voiceId: process.env.CARTESIA_VOICE_ID || "79693aee-1207-4771-a01e-20c393c89e6f",
     version: process.env.CARTESIA_VERSION || "2026-03-01",
     demoText: process.env.CARTESIA_DEMO_TEXT || ""
   },
