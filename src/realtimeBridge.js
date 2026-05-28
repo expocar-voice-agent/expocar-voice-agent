@@ -233,15 +233,10 @@ export function monitorOpenAISipCall(callId) {
 
 export function bridgeTwilioToOpenAI(twilioWs) {
   let streamSid;
-  let openaiWs;
   let audioDeltaCount = 0;
   let responseInProgress = false;
   let lastAssistantAudioAt = Date.now();
   let silenceTimer;
-  let openaiOpened = false;
-  let openaiRetries = 0;
-  let twilioMessageCount = 0;
-  const queuedAudio = [];
   const session = {
     startedAt: Date.now(),
     callSid: "",
@@ -252,8 +247,15 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     summarySent: false
   };
 
+  const openaiWs = new WebSocket(
+    `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(config.openai.realtimeModel)}`,
+    {
+      headers: openAIHeaders()
+    }
+  );
+
   function sendQuickAudio(instructions) {
-    if (!openaiWs || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) return;
+    if (openaiWs.readyState !== WebSocket.OPEN || responseInProgress) return;
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
@@ -267,7 +269,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
       const idleMs = Date.now() - lastAssistantAudioAt;
-      if (idleMs < 4500 || !openaiWs || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
+      if (idleMs < 4500 || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
         resetSilenceTimer();
         return;
       }
@@ -278,219 +280,50 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }, 4500);
   }
 
-  function appendInputAudio(payload) {
-    if (!payload) return;
-    if (!openaiWs || openaiWs.readyState !== WebSocket.OPEN) {
-      queuedAudio.push(payload);
-      if (queuedAudio.length > 50) queuedAudio.shift();
-      return;
-    }
+  openaiWs.on("open", () => {
+    logEvent("openai_realtime_open");
+    resetSilenceTimer();
     openaiWs.send(JSON.stringify({
-      type: "input_audio_buffer.append",
-      audio: payload
-    }));
-  }
-
-  function startOpenAI() {
-    if (openaiWs && [WebSocket.CONNECTING, WebSocket.OPEN].includes(openaiWs.readyState)) return;
-
-    openaiOpened = false;
-    openaiWs = new WebSocket(
-      `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(config.openai.realtimeModel)}`,
-      { headers: openAIHeaders() }
-    );
-
-    openaiWs.on("open", () => {
-      openaiOpened = true;
-      logEvent("openai_realtime_open", { callSid: session.callSid, from: session.from });
-      resetSilenceTimer();
-      openaiWs.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          type: "realtime",
-          model: config.openai.realtimeModel,
-          instructions: agentInstructions,
-          output_modalities: ["audio"],
-          audio: {
-            input: {
-              format: { type: "audio/pcmu" },
-              transcription: { model: "gpt-4o-mini-transcribe" },
-              turn_detection: {
-                type: "server_vad",
-                interrupt_response: true
-              }
-            },
-            output: {
-              format: { type: "audio/pcmu" },
-              voice: config.openai.voice,
-              speed: config.openai.speed
+      type: "session.update",
+      session: {
+        type: "realtime",
+        model: config.openai.realtimeModel,
+        instructions: agentInstructions,
+        output_modalities: ["audio"],
+        audio: {
+          input: {
+            format: { type: "audio/pcmu" },
+            transcription: { model: "gpt-4o-mini-transcribe" },
+            turn_detection: {
+              type: "server_vad",
+              interrupt_response: true
             }
           },
-          tools: realtimeTools,
-          tool_choice: "auto"
+          output: {
+            format: { type: "audio/pcmu" },
+            voice: config.openai.voice,
+            speed: config.openai.speed
+          }
+        },
+        tools: realtimeTools,
+        tool_choice: "auto"
+      }
+    }));
+
+    setTimeout(() => {
+      if (openaiWs.readyState !== WebSocket.OPEN || session.transcript.length) return;
+      openaiWs.send(JSON.stringify({
+        type: "response.create",
+        response: {
+          output_modalities: ["audio"],
+          instructions: `Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta con voce naturale e ritmo spedito: ${greetingForRome()}, Expocar Italia, sono Marco. In cosa posso esserle utile? Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale.`
         }
       }));
-
-      while (queuedAudio.length && openaiWs.readyState === WebSocket.OPEN) {
-        appendInputAudio(queuedAudio.shift());
-      }
-
-      setTimeout(() => {
-        if (!openaiWs || openaiWs.readyState !== WebSocket.OPEN || session.transcript.length) return;
-        openaiWs.send(JSON.stringify({
-          type: "response.create",
-          response: {
-            output_modalities: ["audio"],
-            instructions: `Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta con voce naturale e ritmo spedito: ${greetingForRome()}, Expocar Italia, sono Marco. In cosa posso esserle utile? Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale.`
-          }
-        }));
-      }, 1800);
-    });
-
-    openaiWs.on("message", async (raw) => {
-      const event = safeJsonParse(raw);
-
-      if (event.type === "error") {
-        logEvent("openai_realtime_server_error", {
-          error: event.error
-        });
-        if (["response_cancel_not_active", "conversation_already_has_active_response"].includes(event.error?.code)) {
-          return;
-        }
-        alertSeller("openai_realtime_server_error", {
-          message: event.error?.message,
-          code: event.error?.code,
-          callSid: session.callSid,
-          from: session.from,
-          details: event.error
-        });
-        return;
-      }
-
-      if (event.type === "session.created" || event.type === "session.updated" || event.type === "response.created") {
-        logEvent("openai_realtime_event", { eventType: event.type });
-      }
-
-      if (event.type === "response.created") {
-        responseInProgress = true;
-        resetSilenceTimer();
-      }
-
-      if (
-        event.type === "conversation.item.input_audio_transcription.completed"
-        || event.type === "input_audio_buffer.transcription.completed"
-      ) {
-        appendTranscript(session, "Cliente", extractTranscript(event));
-        return;
-      }
-
-      if (
-        event.type === "response.audio_transcript.done"
-        || event.type === "response.output_audio_transcript.done"
-        || event.type === "response.output_item.done"
-      ) {
-        const transcript = extractTranscript(event);
-        if (transcript) appendTranscript(session, "Marco", transcript);
-      }
-
-      if (event.type === "input_audio_buffer.speech_started") {
-        logEvent("openai_speech_started", { responseInProgress });
-        if (responseInProgress && openaiWs.readyState === WebSocket.OPEN) {
-          openaiWs.send(JSON.stringify({ type: "response.cancel" }));
-        }
-        if (streamSid && twilioWs.readyState === WebSocket.OPEN) {
-          twilioWs.send(JSON.stringify({
-            event: "clear",
-            streamSid
-          }));
-        }
-        return;
-      }
-
-      const audioDelta = event.delta || event.audio;
-      if ((event.type === "response.output_audio.delta" || event.type === "response.audio.delta") && audioDelta && streamSid) {
-        lastAssistantAudioAt = Date.now();
-        resetSilenceTimer();
-        audioDeltaCount += 1;
-        if (audioDeltaCount <= 3) {
-          logEvent("openai_audio_delta", { count: audioDeltaCount, eventType: event.type });
-        }
-        if (twilioWs.readyState === WebSocket.OPEN) {
-          twilioWs.send(JSON.stringify({
-            event: "media",
-            streamSid,
-            media: { payload: audioDelta }
-          }));
-        }
-        return;
-      }
-
-      if (event.type === "response.done") {
-        responseInProgress = false;
-        resetSilenceTimer();
-        logEvent("openai_response_done", {
-          status: event.response?.status,
-          statusDetails: event.response?.status_details,
-          outputTypes: event.response?.output?.map((item) => item.type)
-        });
-      }
-
-      if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
-        await handleRealtimeToolCall(event, openaiWs, session);
-      }
-    });
-
-    openaiWs.on("error", (error) => {
-      logEvent("openai_realtime_error", {
-        callSid: session.callSid,
-        from: session.from,
-        opened: openaiOpened,
-        message: error.message,
-        code: error.code
-      });
-      if (!openaiOpened && openaiRetries < 2 && twilioWs.readyState === WebSocket.OPEN) {
-        openaiRetries += 1;
-        setTimeout(startOpenAI, 350);
-        return;
-      }
-      alertSeller("openai_realtime_error", {
-        message: error.message,
-        code: error.code,
-        callSid: session.callSid,
-        from: session.from
-      });
-    });
-
-    openaiWs.on("close", (code, reason) => {
-      clearTimeout(silenceTimer);
-      logEvent("openai_realtime_close", {
-        callSid: session.callSid,
-        from: session.from,
-        opened: openaiOpened,
-        code,
-        reason: reason?.toString?.() || ""
-      });
-      if (!openaiOpened && openaiRetries < 2 && twilioWs.readyState === WebSocket.OPEN) {
-        openaiRetries += 1;
-        setTimeout(startOpenAI, 350);
-        return;
-      }
-      if (openaiOpened && twilioWs.readyState === WebSocket.OPEN) {
-        twilioWs.close();
-      }
-    });
-  }
+    }, 1800);
+  });
 
   twilioWs.on("message", (raw) => {
-    twilioMessageCount += 1;
     const message = safeJsonParse(raw);
-    if (twilioMessageCount <= 3) {
-      logEvent("twilio_media_message", {
-        count: twilioMessageCount,
-        event: message.event || "",
-        bytes: raw?.length || 0
-      });
-    }
 
     if (message.event === "start") {
       streamSid = message.start?.streamSid;
@@ -503,22 +336,130 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         from: session.from,
         to: session.to
       });
-      startOpenAI();
       return;
     }
 
-    if (message.event === "media") {
+    if (message.event === "media" && openaiWs.readyState === WebSocket.OPEN) {
       resetSilenceTimer();
-      appendInputAudio(message.media.payload);
+      openaiWs.send(JSON.stringify({
+        type: "input_audio_buffer.append",
+        audio: message.media.payload
+      }));
     }
 
     if (message.event === "stop") {
       logEvent("twilio_media_stop", { streamSid });
       sendFinalCallSummary(session);
-      if (openaiWs && [WebSocket.CONNECTING, WebSocket.OPEN].includes(openaiWs.readyState)) {
-        openaiWs.close();
-      }
+      openaiWs.close();
     }
+  });
+
+  openaiWs.on("message", async (raw) => {
+    const event = safeJsonParse(raw);
+
+    if (event.type === "error") {
+      logEvent("openai_realtime_server_error", {
+        error: event.error
+      });
+      if (["response_cancel_not_active", "conversation_already_has_active_response"].includes(event.error?.code)) {
+        return;
+      }
+      alertSeller("openai_realtime_server_error", {
+        message: event.error?.message,
+        code: event.error?.code,
+        callSid: session.callSid,
+        from: session.from,
+        details: event.error
+      });
+      return;
+    }
+
+    if (event.type === "session.created" || event.type === "session.updated" || event.type === "response.created") {
+      logEvent("openai_realtime_event", { eventType: event.type });
+    }
+
+    if (event.type === "response.created") {
+      responseInProgress = true;
+      resetSilenceTimer();
+    }
+
+    if (
+      event.type === "conversation.item.input_audio_transcription.completed"
+      || event.type === "input_audio_buffer.transcription.completed"
+    ) {
+      appendTranscript(session, "Cliente", extractTranscript(event));
+      return;
+    }
+
+    if (
+      event.type === "response.audio_transcript.done"
+      || event.type === "response.output_audio_transcript.done"
+      || event.type === "response.output_item.done"
+    ) {
+      const transcript = extractTranscript(event);
+      if (transcript) appendTranscript(session, "Marco", transcript);
+    }
+
+    if (event.type === "input_audio_buffer.speech_started") {
+      logEvent("openai_speech_started", { responseInProgress });
+      if (responseInProgress && openaiWs.readyState === WebSocket.OPEN) {
+        openaiWs.send(JSON.stringify({ type: "response.cancel" }));
+      }
+      if (streamSid) {
+        twilioWs.send(JSON.stringify({
+          event: "clear",
+          streamSid
+        }));
+      }
+      return;
+    }
+
+    const audioDelta = event.delta || event.audio;
+    if ((
+      event.type === "response.output_audio.delta"
+      || event.type === "response.audio.delta"
+      || event.type === "response.audio.delta"
+    ) && audioDelta && streamSid) {
+      lastAssistantAudioAt = Date.now();
+      resetSilenceTimer();
+      audioDeltaCount += 1;
+      if (audioDeltaCount <= 3) {
+        logEvent("openai_audio_delta", { count: audioDeltaCount, eventType: event.type });
+      }
+      twilioWs.send(JSON.stringify({
+        event: "media",
+        streamSid,
+        media: { payload: audioDelta }
+      }));
+      return;
+    }
+
+    if (event.type === "response.done") {
+      responseInProgress = false;
+      resetSilenceTimer();
+      logEvent("openai_response_done", {
+        status: event.response?.status,
+        statusDetails: event.response?.status_details,
+        outputTypes: event.response?.output?.map((item) => item.type)
+      });
+    }
+
+    if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
+      await handleRealtimeToolCall(event, openaiWs, session);
+    }
+  });
+
+  openaiWs.on("error", (error) => {
+    logEvent("openai_realtime_error", {
+      message: error.message,
+      code: error.code
+    });
+    alertSeller("openai_realtime_error", {
+      message: error.message,
+      code: error.code,
+      callSid: session.callSid,
+      from: session.from
+    });
   });
 
   twilioWs.on("error", (error) => {
@@ -534,18 +475,13 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     });
   });
 
-  twilioWs.on("close", (code, reason) => {
+  twilioWs.on("close", () => {
     clearTimeout(silenceTimer);
-    logEvent("twilio_media_close", {
-      callSid: session.callSid,
-      from: session.from,
-      code,
-      reason: reason?.toString?.() || "",
-      messageCount: twilioMessageCount
-    });
     sendFinalCallSummary(session);
-    if (openaiWs && [WebSocket.CONNECTING, WebSocket.OPEN].includes(openaiWs.readyState)) {
-      openaiWs.close();
-    }
+    openaiWs.close();
+  });
+  openaiWs.on("close", () => {
+    clearTimeout(silenceTimer);
+    twilioWs.close();
   });
 }

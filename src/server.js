@@ -950,20 +950,42 @@ app.post("/twilio/voice", (req, res) => {
   const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
+  if (req.body?.CallSid && config.twilio.accountSid && config.twilio.authToken) {
+    const client = twilio(config.twilio.accountSid, config.twilio.authToken);
+    client.calls(req.body.CallSid).recordings.create({
+      recordingChannels: "dual",
+      recordingStatusCallback: `${httpBaseUrl}/twilio/recording-status`,
+      recordingStatusCallbackMethod: "POST",
+      recordingStatusCallbackEvent: ["in-progress", "completed", "absent"]
+    }).then((recording) => {
+      logEvent("twilio_recording_started", {
+        callSid: req.body?.CallSid,
+        recordingSid: recording.sid
+      });
+    }).catch((error) => {
+      logEvent("twilio_recording_start_failed", {
+        callSid: req.body?.CallSid,
+        error: error.message,
+        code: error.code
+      });
+      alertSeller("twilio_recording_start_failed", {
+        message: error.message,
+        code: error.code,
+        callSid: req.body?.CallSid,
+        from: req.body?.From
+      });
+    });
+  }
   const stream = connect.stream({
-    url: `${wsUrl}/media`
+    url: `${wsUrl}/twilio/media`,
+    statusCallback: `${httpBaseUrl}/twilio/stream-status`,
+    statusCallbackMethod: "POST"
   });
   stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
   stream.parameter({ name: "from", value: req.body?.From || "" });
   stream.parameter({ name: "to", value: req.body?.To || "" });
 
-  const twiml = response.toString();
-  logEvent("twilio_voice_twiml_generated", {
-    callSid: req.body?.CallSid,
-    streamUrl: `${wsUrl}/media`
-  });
-  res.type("text/xml").send(twiml);
-
+  res.type("text/xml").send(response.toString());
 });
 
 app.post("/twilio/voice-greeting", (req, res) => {
@@ -1227,16 +1249,10 @@ app.use((error, req, res, _next) => {
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/twilio/media" });
-const simpleMediaWss = new WebSocketServer({ server, path: "/media" });
 const cartesiaDemoWss = new WebSocketServer({ server, path: "/cartesia/demo-media" });
 
 wss.on("connection", (ws) => {
   logEvent("twilio_media_connected");
-  bridgeTwilioToOpenAI(ws);
-});
-
-simpleMediaWss.on("connection", (ws) => {
-  logEvent("twilio_media_connected", { path: "/media" });
   bridgeTwilioToOpenAI(ws);
 });
 
