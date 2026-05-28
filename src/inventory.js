@@ -127,6 +127,20 @@ function toNumber(value) {
   return cleaned ? Number(cleaned) : undefined;
 }
 
+function publicCar(car) {
+  return {
+    brand: car.brand || "",
+    model: car.model || "",
+    version: car.version || "",
+    price: car.price || "",
+    mileage: car.mileage || "",
+    year: car.year || "",
+    fuel: car.fuel || "",
+    gearbox: car.gearbox || "",
+    color: car.color || ""
+  };
+}
+
 export async function fetchInventory() {
   if (inventoryCache.cars && Date.now() < inventoryCache.expiresAt) {
     return inventoryCache.cars;
@@ -190,11 +204,11 @@ function filterInventory(cars, filters = {}) {
   return relaxed;
 }
 
-export async function searchInventoryDetailed(filters = {}, limit = 8) {
+export async function searchInventoryDetailed(filters = {}, limit = 5) {
   const cars = await fetchInventory();
   const matches = filterInventory(cars, filters);
   return {
-    results: matches.slice(0, limit),
+    results: matches.slice(0, limit).map(publicCar),
     count: matches.length,
     totalAvailable: cars.length
   };
