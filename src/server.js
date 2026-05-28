@@ -1149,6 +1149,11 @@ app.post("/twilio/voice", (req, res) => {
   registerIncomingCall(req.body || {});
 
   const response = new twilio.twiml.VoiceResponse();
+  response.say({
+    language: "it-IT",
+    voice: "Polly.Giorgio"
+  }, "Expocar Italia, un attimo.");
+  response.pause({ length: 1 });
   const connect = response.connect();
   const httpBaseUrl = baseUrlFromRequest(req);
   const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
