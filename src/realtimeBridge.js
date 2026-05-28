@@ -247,6 +247,26 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     summarySent: false
   };
 
+  function closeTwilioSafely(reason) {
+    if (twilioWs.readyState === WebSocket.OPEN) {
+      logEvent("twilio_media_close_requested", {
+        callSid: session.callSid,
+        reason
+      });
+      twilioWs.close();
+    }
+  }
+
+  function closeOpenAISafely(reason) {
+    if (openaiWs.readyState === WebSocket.OPEN || openaiWs.readyState === WebSocket.CONNECTING) {
+      logEvent("openai_realtime_close_requested", {
+        callSid: session.callSid,
+        reason
+      });
+      openaiWs.close();
+    }
+  }
+
   const openaiWs = new WebSocket(
     `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(config.openai.realtimeModel)}`,
     {
@@ -350,7 +370,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (message.event === "stop") {
       logEvent("twilio_media_stop", { streamSid });
       sendFinalCallSummary(session);
-      openaiWs.close();
+      closeOpenAISafely("twilio_media_stop");
     }
   });
 
@@ -451,6 +471,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
   openaiWs.on("error", (error) => {
     logEvent("openai_realtime_error", {
+      callSid: session.callSid,
+      from: session.from,
       message: error.message,
       code: error.code
     });
@@ -464,6 +486,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
   twilioWs.on("error", (error) => {
     logEvent("twilio_media_error", {
+      callSid: session.callSid,
+      from: session.from,
       message: error.message,
       code: error.code
     });
@@ -475,13 +499,27 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     });
   });
 
-  twilioWs.on("close", () => {
+  twilioWs.on("close", (code, reason) => {
     clearTimeout(silenceTimer);
+    logEvent("twilio_media_close", {
+      callSid: session.callSid,
+      from: session.from,
+      code,
+      reason: reason?.toString(),
+      lifetimeMs: Date.now() - session.startedAt
+    });
     sendFinalCallSummary(session);
-    openaiWs.close();
+    closeOpenAISafely("twilio_media_close");
   });
-  openaiWs.on("close", () => {
+  openaiWs.on("close", (code, reason) => {
     clearTimeout(silenceTimer);
-    twilioWs.close();
+    logEvent("openai_realtime_close", {
+      callSid: session.callSid,
+      from: session.from,
+      code,
+      reason: reason?.toString(),
+      lifetimeMs: Date.now() - session.startedAt
+    });
+    closeTwilioSafely("openai_realtime_close");
   });
 }

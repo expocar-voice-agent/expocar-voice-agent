@@ -26,7 +26,10 @@ function getCall(callSid) {
 function remember(callSid, patch) {
   const call = getCall(callSid);
   if (!call) return null;
-  Object.assign(call, patch, { updatedAt: nowIso() });
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) call[key] = value;
+  }
+  call.updatedAt = nowIso();
   return call;
 }
 
