@@ -145,8 +145,7 @@ export async function fetchInventory() {
   return flattenAds(document).map(normalizeAd);
 }
 
-export async function searchInventory(filters = {}) {
-  const cars = await fetchInventory();
+function filterInventory(cars, filters = {}) {
   const terms = [
     filters.brand,
     filters.model,
@@ -175,5 +174,20 @@ export async function searchInventory(filters = {}) {
     .sort((a, b) => b.score - a.score)
     .map((item) => item.car);
 
-  return relaxed.slice(0, 8);
+  return relaxed;
+}
+
+export async function searchInventoryDetailed(filters = {}, limit = 8) {
+  const cars = await fetchInventory();
+  const matches = filterInventory(cars, filters);
+  return {
+    results: matches.slice(0, limit),
+    count: matches.length,
+    totalAvailable: cars.length
+  };
+}
+
+export async function searchInventory(filters = {}) {
+  const detailed = await searchInventoryDetailed(filters);
+  return detailed.results;
 }

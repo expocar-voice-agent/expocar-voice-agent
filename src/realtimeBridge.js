@@ -377,9 +377,15 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         audio: {
           input: {
             format: { type: "audio/pcmu" },
-            transcription: { model: "gpt-4o-mini-transcribe" },
+            transcription: {
+              model: "gpt-4o-mini-transcribe",
+              language: "it"
+            },
             turn_detection: {
               type: "server_vad",
+              threshold: 0.45,
+              prefix_padding_ms: 250,
+              silence_duration_ms: 450,
               interrupt_response: true
             }
           },

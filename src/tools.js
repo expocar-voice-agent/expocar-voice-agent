@@ -1,4 +1,4 @@
-import { searchInventory } from "./inventory.js";
+import { searchInventoryDetailed } from "./inventory.js";
 import { checkAppointmentSlot, createAppointment, getAvailableSlots } from "./calendar.js";
 import { saveLead } from "./leads.js";
 import { notifySeller, normalizeWhatsappNumber, sendAppointmentWhatsapp } from "./whatsapp.js";
@@ -217,13 +217,15 @@ export const realtimeTools = [
 
 export async function runTool(name, args, context = {}) {
   if (name === "cerca_auto") {
-    const results = await searchInventory(args);
+    const inventory = await searchInventoryDetailed(args);
     return {
-      results,
-      count: results.length,
-      message: results.length
-        ? "Auto trovate nello stock Expocar. Comunica al cliente i risultati principali."
-        : "Nessun risultato trovato con questi filtri. Non dire che e impossibile: proponi importazione su misura o chiedi una verifica a un consulente."
+      results: inventory.results,
+      count: inventory.count,
+      shownCount: inventory.results.length,
+      totalAvailable: inventory.totalAvailable,
+      message: inventory.count
+        ? `Auto trovate nello stock Expocar. Totale risultati compatibili: ${inventory.count}. Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Comunica al cliente solo i risultati principali mostrati.`
+        : `Nessun risultato trovato con questi filtri. Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Non dire che e impossibile: proponi importazione su misura o chiedi una verifica a un consulente.`
     };
   }
 
