@@ -182,7 +182,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "trasferisci_chiamata",
-    description: "Trasferisce la telefonata a un consulente umano quando il cliente lo chiede.",
+    description: "Trasferisce la telefonata a un consulente umano solo quando il cliente chiede di parlare subito/adesso con una persona. Non usare per fissare appuntamenti con consulente.",
     parameters: {
       type: "object",
       properties: {

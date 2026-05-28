@@ -25,6 +25,8 @@ services:
         value: cedar
       - key: OPENAI_REALTIME_SPEED
         value: 1.2
+      - key: OPENAI_SUMMARY_MODEL
+        value: gpt-4o-mini
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN

@@ -6,6 +6,7 @@ import { realtimeTools, runTool } from "./tools.js";
 import { saveLead } from "./leads.js";
 import { notifySeller, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
 import { alertSeller } from "./alerts.js";
+import { buildSellerCallSummary } from "./callSummary.js";
 
 function safeJsonParse(value, fallback = {}) {
   try {
@@ -40,29 +41,22 @@ function appendTranscript(session, speaker, text) {
   });
 }
 
-function buildCallSummary(session) {
-  const durationSeconds = Math.max(0, Math.round((Date.now() - session.startedAt) / 1000));
-  const transcript = session.transcript
-    .slice(-12)
-    .map((item) => `${item.speaker}: ${item.text}`)
-    .join("\n");
+function greetingForRome() {
+  const hour = Number(new Intl.DateTimeFormat("it-IT", {
+    timeZone: config.business.timezone,
+    hour: "2-digit",
+    hour12: false
+  }).format(new Date()));
 
-  return [
-    "Riepilogo chiamata Expocar",
-    `Da: ${session.from || "numero non disponibile"}`,
-    `A: ${session.to || "numero Expocar"}`,
-    session.callSid ? `Call SID: ${session.callSid}` : "",
-    `Durata circa: ${durationSeconds} sec`,
-    "",
-    transcript ? `Conversazione:\n${clipText(transcript, 1200)}` : "Conversazione: trascrizione non disponibile.",
-    session.toolCalls.length ? `\nAzioni eseguite: ${session.toolCalls.join(", ")}` : ""
-  ].filter((line) => line !== "").join("\n");
+  if (hour < 13) return "Buongiorno";
+  if (hour < 18) return "Buon pomeriggio";
+  return "Buonasera";
 }
 
 async function sendFinalCallSummary(session) {
   if (session.summarySent) return;
   session.summarySent = true;
-  const body = buildCallSummary(session);
+  const body = await buildSellerCallSummary(session);
   saveLead({
     type: "call_summary",
     callSid: session.callSid,
@@ -211,7 +205,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: "Di esattamente: Expocar, buongiorno, sono Marco. In cosa posso esserle utile?"
+        instructions: `Di esattamente: ${greetingForRome()}, Expocar Italia, sono Marco. In cosa posso esserle utile?`
       }
     }));
   });
@@ -241,6 +235,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let streamSid;
   let audioDeltaCount = 0;
   let responseInProgress = false;
+  let lastAssistantAudioAt = Date.now();
+  let silenceTimer;
   const session = {
     startedAt: Date.now(),
     callSid: "",
@@ -258,8 +254,35 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
   );
 
+  function sendQuickAudio(instructions) {
+    if (openaiWs.readyState !== WebSocket.OPEN || responseInProgress) return;
+    openaiWs.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        output_modalities: ["audio"],
+        instructions
+      }
+    }));
+  }
+
+  function resetSilenceTimer() {
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      const idleMs = Date.now() - lastAssistantAudioAt;
+      if (idleMs < 4500 || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
+        resetSilenceTimer();
+        return;
+      }
+      logEvent("anti_silence_prompt", { callSid: session.callSid, idleMs });
+      sendQuickAudio("Di una frase molto breve e naturale per evitare silenzio: Un attimo, verifico subito.");
+      lastAssistantAudioAt = Date.now();
+      resetSilenceTimer();
+    }, 4500);
+  }
+
   openaiWs.on("open", () => {
     logEvent("openai_realtime_open");
+    resetSilenceTimer();
     openaiWs.send(JSON.stringify({
       type: "session.update",
       session: {
@@ -293,7 +316,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         type: "response.create",
         response: {
           output_modalities: ["audio"],
-          instructions: "Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta con voce naturale e ritmo spedito: Expocar, buongiorno, sono Marco. In cosa posso esserle utile? Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale."
+          instructions: `Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta con voce naturale e ritmo spedito: ${greetingForRome()}, Expocar Italia, sono Marco. In cosa posso esserle utile? Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale.`
         }
       }));
     }, 1800);
@@ -317,6 +340,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
 
     if (message.event === "media" && openaiWs.readyState === WebSocket.OPEN) {
+      resetSilenceTimer();
       openaiWs.send(JSON.stringify({
         type: "input_audio_buffer.append",
         audio: message.media.payload
@@ -337,6 +361,9 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       logEvent("openai_realtime_server_error", {
         error: event.error
       });
+      if (["response_cancel_not_active", "conversation_already_has_active_response"].includes(event.error?.code)) {
+        return;
+      }
       alertSeller("openai_realtime_server_error", {
         message: event.error?.message,
         code: event.error?.code,
@@ -353,6 +380,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "response.created") {
       responseInProgress = true;
+      resetSilenceTimer();
     }
 
     if (
@@ -392,6 +420,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       || event.type === "response.audio.delta"
       || event.type === "response.audio.delta"
     ) && audioDelta && streamSid) {
+      lastAssistantAudioAt = Date.now();
+      resetSilenceTimer();
       audioDeltaCount += 1;
       if (audioDeltaCount <= 3) {
         logEvent("openai_audio_delta", { count: audioDeltaCount, eventType: event.type });
@@ -406,6 +436,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "response.done") {
       responseInProgress = false;
+      resetSilenceTimer();
       logEvent("openai_response_done", {
         status: event.response?.status,
         statusDetails: event.response?.status_details,
@@ -445,8 +476,12 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   });
 
   twilioWs.on("close", () => {
+    clearTimeout(silenceTimer);
     sendFinalCallSummary(session);
     openaiWs.close();
   });
-  openaiWs.on("close", () => twilioWs.close());
+  openaiWs.on("close", () => {
+    clearTimeout(silenceTimer);
+    twilioWs.close();
+  });
 }

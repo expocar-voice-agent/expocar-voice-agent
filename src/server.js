@@ -798,6 +798,32 @@ app.post("/twilio/voice", (req, res) => {
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
   const httpBaseUrl = `${proto}://${req.get("host")}`;
+  if (req.body?.CallSid && config.twilio.accountSid && config.twilio.authToken) {
+    const client = twilio(config.twilio.accountSid, config.twilio.authToken);
+    client.calls(req.body.CallSid).recordings.create({
+      recordingChannels: "dual",
+      recordingStatusCallback: `${httpBaseUrl}/twilio/recording-status`,
+      recordingStatusCallbackMethod: "POST",
+      recordingStatusCallbackEvent: ["in-progress", "completed", "absent"]
+    }).then((recording) => {
+      logEvent("twilio_recording_started", {
+        callSid: req.body?.CallSid,
+        recordingSid: recording.sid
+      });
+    }).catch((error) => {
+      logEvent("twilio_recording_start_failed", {
+        callSid: req.body?.CallSid,
+        error: error.message,
+        code: error.code
+      });
+      alertSeller("twilio_recording_start_failed", {
+        message: error.message,
+        code: error.code,
+        callSid: req.body?.CallSid,
+        from: req.body?.From
+      });
+    });
+  }
   const stream = connect.stream({
     url: `${wsUrl}/twilio/media`,
     statusCallback: `${httpBaseUrl}/twilio/stream-status`,
@@ -844,6 +870,50 @@ app.post("/twilio/status", (req, res) => {
 
 app.post("/twilio/stream-status", (req, res) => {
   logEvent("twilio_stream_status", req.body || {});
+  res.json({ ok: true });
+});
+
+app.post("/twilio/recording-status", async (req, res) => {
+  const recordingUrl = req.body?.RecordingUrl;
+  const recordingSid = req.body?.RecordingSid;
+  const callSid = req.body?.CallSid;
+  const status = req.body?.RecordingStatus;
+  logEvent("twilio_recording_status", {
+    callSid,
+    recordingSid,
+    recordingStatus: status,
+    recordingUrl,
+    recordingDuration: req.body?.RecordingDuration
+  });
+
+  if (status === "completed" && recordingUrl) {
+    try {
+      await notifySeller({
+        body: [
+          "Registrazione chiamata Expocar disponibile",
+          callSid ? `Call SID: ${callSid}` : "",
+          recordingSid ? `Recording SID: ${recordingSid}` : "",
+          req.body?.RecordingDuration ? `Durata: ${req.body.RecordingDuration} sec` : "",
+          `${recordingUrl}.mp3`
+        ].filter(Boolean).join("\n")
+      });
+    } catch (error) {
+      logEvent("twilio_recording_whatsapp_failed", {
+        callSid,
+        recordingSid,
+        error: error.message
+      });
+    }
+  }
+
+  if (status === "absent") {
+    alertSeller("twilio_recording_absent", {
+      message: "Registrazione assente o non disponibile.",
+      callSid,
+      details: req.body
+    });
+  }
+
   res.json({ ok: true });
 });
 
