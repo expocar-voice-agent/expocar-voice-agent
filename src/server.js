@@ -20,7 +20,7 @@ import { markCallStatus, markStreamStatus, recentCallLifecycle, registerIncoming
 
 const app = express();
 const voiceConversations = new Map();
-const BUILD_VERSION = "2026-05-28-turn-based-gather";
+const BUILD_VERSION = "2026-05-28-realtime-restored";
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -64,7 +64,7 @@ app.get("/admin/version", requireAdmin, (_req, res) => {
   res.json({
     ok: true,
     buildVersion: BUILD_VERSION,
-    voiceMode: "turn_based_gather",
+    voiceMode: "openai_realtime_media_stream",
     cartesiaVoiceId: config.cartesia.voiceId,
     realtimeModel: config.openai.realtimeModel
   });
@@ -181,6 +181,18 @@ function trimForVoice(text, maxLength = 700) {
   return `${clean.slice(0, maxLength - 3)}...`;
 }
 
+function extractResponseText(body) {
+  if (body?.output_text) return body.output_text;
+  const parts = [];
+  for (const item of body?.output || []) {
+    for (const content of item.content || []) {
+      if (content.type === "output_text" && content.text) parts.push(content.text);
+      if (content.type === "text" && content.text) parts.push(content.text);
+    }
+  }
+  return parts.join(" ");
+}
+
 function isClearGoodbye(text) {
   const clean = String(text || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
   if (!clean) return false;
@@ -203,13 +215,10 @@ async function generateTurnBasedReply({ callSid, from, speech }) {
   const history = getVoiceConversation(callSid);
   if (speech) history.push({ role: "user", content: speech });
 
-  const input = [
-    ...history.slice(-8),
-    {
-      role: "user",
-      content: "Rispondi al cliente al telefono in massimo due frasi e poi fai una domanda utile per proseguire. Non dire di essere un'intelligenza artificiale."
-    }
-  ];
+  const conversationText = history
+    .slice(-8)
+    .map((item) => `${item.role === "assistant" ? "Marco" : "Cliente"}: ${item.content}`)
+    .join("\n");
 
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -220,8 +229,29 @@ async function generateTurnBasedReply({ callSid, from, speech }) {
       },
       body: JSON.stringify({
         model: config.openai.summaryModel,
-        instructions: agentInstructions,
-        input,
+        input: [
+          {
+            role: "system",
+            content: [
+              agentInstructions,
+              "Sei al telefono in modalita a turni. Devi rispondere alla frase del cliente, non dire frasi generiche come 'mi dica pure' se il cliente ha gia fatto una domanda.",
+              "Rispondi in italiano, massimo due frasi, poi fai una domanda concreta per proseguire solo se serve.",
+              "Se il cliente chiede un'auto, cita che verifico lo stock o propongo importazione sopra 20.000 euro secondo le regole Expocar.",
+              "Non chiudere la telefonata e non salutare, salvo congedo esplicito."
+            ].join("\n")
+          },
+          {
+            role: "user",
+            content: [
+              "Conversazione finora:",
+              conversationText || "Nessuna.",
+              "",
+              `Ultima frase cliente: ${speech}`,
+              "",
+              "Risposta di Marco:"
+            ].join("\n")
+          }
+        ],
         max_output_tokens: 220
       })
     });
@@ -232,13 +262,16 @@ async function generateTurnBasedReply({ callSid, from, speech }) {
     }
 
     const body = await response.json();
-    const text = trimForVoice(body.output_text || "Mi dica pure, la ascolto.");
+    const rawText = extractResponseText(body);
+    const text = trimForVoice(rawText || "Mi scusi, mi ripete la richiesta principale?");
     history.push({ role: "assistant", content: text });
     logEvent("twilio_turn_reply_generated", {
       callSid,
       from,
       speech: trimForVoice(speech, 300),
-      reply: text
+      reply: text,
+      outputTextPresent: Boolean(body.output_text),
+      outputItems: body.output?.length || 0
     });
     return text;
   } catch (error) {
@@ -1300,21 +1333,24 @@ app.post("/twilio/voice", (req, res) => {
 
   const httpBaseUrl = baseUrlFromRequest(req);
   const response = new twilio.twiml.VoiceResponse();
-  sayWithGather(response, {
-    actionUrl: `${httpBaseUrl}/twilio/gather`,
-    text: `${new Intl.DateTimeFormat("it-IT", {
-      timeZone: config.business.timezone,
-      hour: "2-digit",
-      hour12: false
-    }).format(new Date()) < 13 ? "Buongiorno" : "Buon pomeriggio"}, Expocar Italia, sono Marco. In cosa posso esserle utile?`
+  const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
+  const wsProtocol = proto === "https" ? "wss" : "ws";
+  const wsUrl = `${wsProtocol}://${req.get("host")}`;
+  const connect = response.connect();
+  const stream = connect.stream({
+    url: `${wsUrl}/twilio/media`,
+    statusCallback: `${httpBaseUrl}/twilio/stream-status`,
+    statusCallbackMethod: "POST"
   });
-  response.redirect({ method: "POST" }, `${httpBaseUrl}/twilio/gather`);
+  stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
+  stream.parameter({ name: "from", value: req.body?.From || "" });
+  stream.parameter({ name: "to", value: req.body?.To || "" });
 
   const twiml = response.toString();
   logEvent("twilio_voice_twiml_generated", {
     callSid: req.body?.CallSid,
-    mode: "turn_based_gather",
-    actionUrl: `${httpBaseUrl}/twilio/gather`
+    mode: "openai_realtime_media_stream",
+    streamUrl: `${wsUrl}/twilio/media`
   });
   res.type("text/xml").send(twiml);
 
