@@ -951,7 +951,7 @@ app.post("/twilio/voice", (req, res) => {
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
   const stream = connect.stream({
-    url: `${wsUrl}/twilio/media`
+    url: `${wsUrl}/media`
   });
   stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
   stream.parameter({ name: "from", value: req.body?.From || "" });
@@ -960,7 +960,7 @@ app.post("/twilio/voice", (req, res) => {
   const twiml = response.toString();
   logEvent("twilio_voice_twiml_generated", {
     callSid: req.body?.CallSid,
-    streamUrl: `${wsUrl}/twilio/media`
+    streamUrl: `${wsUrl}/media`
   });
   res.type("text/xml").send(twiml);
 
@@ -1227,10 +1227,16 @@ app.use((error, req, res, _next) => {
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/twilio/media" });
+const simpleMediaWss = new WebSocketServer({ server, path: "/media" });
 const cartesiaDemoWss = new WebSocketServer({ server, path: "/cartesia/demo-media" });
 
 wss.on("connection", (ws) => {
   logEvent("twilio_media_connected");
+  bridgeTwilioToOpenAI(ws);
+});
+
+simpleMediaWss.on("connection", (ws) => {
+  logEvent("twilio_media_connected", { path: "/media" });
   bridgeTwilioToOpenAI(ws);
 });
 
