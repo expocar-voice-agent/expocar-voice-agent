@@ -20,7 +20,7 @@ import { markCallStatus, markStreamStatus, recentCallLifecycle, registerIncoming
 
 const app = express();
 const voiceConversations = new Map();
-const BUILD_VERSION = "2026-05-28-realtime-restored";
+const BUILD_VERSION = "2026-05-28-recording-proxy-stable-restore";
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({
   verify: (req, _res, buf) => {
