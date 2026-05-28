@@ -7,7 +7,6 @@ import WebSocket, { WebSocketServer } from "ws";
 import twilio from "twilio";
 import { google } from "googleapis";
 import { config } from "./config.js";
-import { agentInstructions } from "./agentPrompt.js";
 import { acceptOpenAISipCall, bridgeTwilioToOpenAI, monitorOpenAISipCall } from "./realtimeBridge.js";
 import { bridgeTwilioToCartesiaDemo } from "./cartesiaBridge.js";
 import { searchInventory } from "./inventory.js";
@@ -16,11 +15,8 @@ import { readRecentLeads } from "./leads.js";
 import { notifySeller, sendAppointmentWhatsapp, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
-import { markCallStatus, markStreamStatus, recentCallLifecycle, registerIncomingCall } from "./callLifecycle.js";
 
 const app = express();
-const voiceConversations = new Map();
-const BUILD_VERSION = "2026-05-28-recording-proxy-stable-restore";
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -58,16 +54,6 @@ process.on("unhandledRejection", (reason) => {
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
-});
-
-app.get("/admin/version", requireAdmin, (_req, res) => {
-  res.json({
-    ok: true,
-    buildVersion: BUILD_VERSION,
-    voiceMode: "openai_realtime_media_stream",
-    cartesiaVoiceId: config.cartesia.voiceId,
-    realtimeModel: config.openai.realtimeModel
-  });
 });
 
 function requireAdmin(req, res, next) {
@@ -149,211 +135,8 @@ function verifyRecordingAccess(req, recordingSid) {
   return tokenBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
 }
 
-function getVoiceConversation(callSid) {
-  if (!callSid) return [];
-  if (!voiceConversations.has(callSid)) voiceConversations.set(callSid, []);
-  return voiceConversations.get(callSid);
-}
-
-function cleanupVoiceConversation(callSid) {
-  if (callSid) voiceConversations.delete(callSid);
-}
-
-function sayWithGather(response, { actionUrl, text }) {
-  const gather = response.gather({
-    input: "speech",
-    action: actionUrl,
-    method: "POST",
-    language: "it-IT",
-    speechTimeout: "auto",
-    timeout: 6,
-    actionOnEmptyResult: true
-  });
-  gather.say({
-    language: "it-IT",
-    voice: "Polly.Giorgio"
-  }, text);
-}
-
-function trimForVoice(text, maxLength = 700) {
-  const clean = String(text || "").replace(/\s+/g, " ").trim();
-  if (clean.length <= maxLength) return clean;
-  return `${clean.slice(0, maxLength - 3)}...`;
-}
-
-function extractResponseText(body) {
-  if (body?.output_text) return body.output_text;
-  const parts = [];
-  for (const item of body?.output || []) {
-    for (const content of item.content || []) {
-      if (content.type === "output_text" && content.text) parts.push(content.text);
-      if (content.type === "text" && content.text) parts.push(content.text);
-    }
-  }
-  return parts.join(" ");
-}
-
-function isClearGoodbye(text) {
-  const clean = String(text || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
-  if (!clean) return false;
-  const words = clean.split(" ");
-  if (words.length > 5) return false;
-  return [
-    "arrivederci",
-    "ciao",
-    "grazie ciao",
-    "ciao grazie",
-    "grazie arrivederci",
-    "arrivederci grazie",
-    "buona giornata",
-    "buonasera",
-    "a presto"
-  ].includes(clean);
-}
-
-async function generateTurnBasedReply({ callSid, from, speech }) {
-  const history = getVoiceConversation(callSid);
-  if (speech) history.push({ role: "user", content: speech });
-
-  const conversationText = history
-    .slice(-8)
-    .map((item) => `${item.role === "assistant" ? "Marco" : "Cliente"}: ${item.content}`)
-    .join("\n");
-
-  try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.openai.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: config.openai.summaryModel,
-        input: [
-          {
-            role: "system",
-            content: [
-              agentInstructions,
-              "Sei al telefono in modalita a turni. Devi rispondere alla frase del cliente, non dire frasi generiche come 'mi dica pure' se il cliente ha gia fatto una domanda.",
-              "Rispondi in italiano, massimo due frasi, poi fai una domanda concreta per proseguire solo se serve.",
-              "Se il cliente chiede un'auto, cita che verifico lo stock o propongo importazione sopra 20.000 euro secondo le regole Expocar.",
-              "Non chiudere la telefonata e non salutare, salvo congedo esplicito."
-            ].join("\n")
-          },
-          {
-            role: "user",
-            content: [
-              "Conversazione finora:",
-              conversationText || "Nessuna.",
-              "",
-              `Ultima frase cliente: ${speech}`,
-              "",
-              "Risposta di Marco:"
-            ].join("\n")
-          }
-        ],
-        max_output_tokens: 220
-      })
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`OpenAI turn reply failed ${response.status}: ${body.slice(0, 500)}`);
-    }
-
-    const body = await response.json();
-    const rawText = extractResponseText(body);
-    const text = trimForVoice(rawText || "Mi scusi, mi ripete la richiesta principale?");
-    history.push({ role: "assistant", content: text });
-    logEvent("twilio_turn_reply_generated", {
-      callSid,
-      from,
-      speech: trimForVoice(speech, 300),
-      reply: text,
-      outputTextPresent: Boolean(body.output_text),
-      outputItems: body.output?.length || 0
-    });
-    return text;
-  } catch (error) {
-    logEvent("twilio_turn_reply_failed", {
-      callSid,
-      from,
-      error: error.message
-    });
-    alertSeller("twilio_turn_reply_failed", {
-      message: error.message,
-      callSid,
-      from
-    });
-    return "Mi scusi, sto avendo un piccolo rallentamento tecnico. Mi dica nome, numero e richiesta principale: la faccio ricontattare subito da un consulente.";
-  }
-}
-
-async function finalizeTurnBasedCall({ callSid, from }) {
-  const history = getVoiceConversation(callSid);
-  if (!history.length) return;
-
-  const transcript = history
-    .map((item) => `${item.role === "assistant" ? "Marco" : "Cliente"}: ${item.content}`)
-    .join("\n");
-
-  try {
-    await notifySeller({
-      body: [
-        "Riepilogo chiamata Expocar",
-        callSid ? `Call SID: ${callSid}` : "",
-        from ? `Da: ${from}` : "",
-        "",
-        trimForVoice(transcript, 1400)
-      ].filter(Boolean).join("\n")
-    });
-    logEvent("twilio_turn_summary_sent", { callSid, from });
-  } catch (error) {
-    logEvent("twilio_turn_summary_failed", { callSid, from, error: error.message });
-  }
-
-  try {
-    await sendCustomerAfterCallWhatsapp({ to: from });
-  } catch (error) {
-    logEvent("twilio_turn_customer_whatsapp_failed", { callSid, from, error: error.message });
-  }
-}
-
-function startCallRecordingAfterResponse({ callSid, from, httpBaseUrl }) {
-  if (!callSid || !config.twilio.accountSid || !config.twilio.authToken) return;
-
-  setTimeout(() => {
-    const client = twilio(config.twilio.accountSid, config.twilio.authToken);
-    client.calls(callSid).recordings.create({
-      recordingChannels: "dual",
-      recordingStatusCallback: `${httpBaseUrl}/twilio/recording-status`,
-      recordingStatusCallbackMethod: "POST",
-      recordingStatusCallbackEvent: ["in-progress", "completed", "absent"]
-    }).then((recording) => {
-      logEvent("twilio_recording_started", {
-        callSid,
-        recordingSid: recording.sid
-      });
-    }).catch((error) => {
-      logEvent("twilio_recording_start_failed", {
-        callSid,
-        error: error.message,
-        code: error.code
-      });
-      alertSeller("twilio_recording_start_failed", {
-        message: error.message,
-        code: error.code,
-        callSid,
-        from
-      });
-    });
-  }, 1500);
-}
-
-async function generateCartesiaDemoAudio(options = {}) {
-  const transcript = options.text || config.cartesia.demoText || "Buongiorno, Expocar Italia, sono Marco. Non si preoccupi, penso a tutto io. Mi dica pure che auto sta cercando e la aiuto subito a trovare la soluzione migliore.";
-  const modelId = options.modelId || config.cartesia.modelId;
-  const voiceId = options.voiceId || config.cartesia.voiceId;
+async function generateCartesiaDemoAudio() {
+  const transcript = config.cartesia.demoText || "Buongiorno, Expocar Italia, sono Marco. Non si preoccupi, penso a tutto io. Mi dica pure che auto sta cercando e la aiuto subito a trovare la soluzione migliore.";
   const response = await fetch("https://api.cartesia.ai/tts/bytes", {
     method: "POST",
     headers: {
@@ -363,16 +146,19 @@ async function generateCartesiaDemoAudio(options = {}) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model_id: modelId,
+      model_id: config.cartesia.modelId,
       transcript,
       voice: {
-        id: voiceId
+        id: config.cartesia.voiceId
       },
       language: "it",
       output_format: {
         container: "mp3",
         sample_rate: 44100,
         bit_rate: 64000
+      },
+      generation_config: {
+        speed: 1.12
       }
     })
   });
@@ -394,56 +180,16 @@ function demoAudioPath() {
   return path.join(process.cwd(), "data", "cartesia-demo.mp3");
 }
 
-async function saveCartesiaDemoAudio(options = {}) {
-  const audio = await generateCartesiaDemoAudio(options);
+async function saveCartesiaDemoAudio() {
+  const audio = await generateCartesiaDemoAudio();
   fs.mkdirSync(path.dirname(demoAudioPath()), { recursive: true });
   fs.writeFileSync(demoAudioPath(), audio.buffer);
   logEvent("cartesia_demo_audio_saved", {
     contentType: audio.contentType,
     bytes: audio.buffer.length,
-    modelId: options.modelId || config.cartesia.modelId,
-    voiceId: options.voiceId || config.cartesia.voiceId
+    voiceId: config.cartesia.voiceId
   });
   return audio;
-}
-
-async function listCartesiaVoices({ language = "it", limit = 50 } = {}) {
-  const url = new URL("https://api.cartesia.ai/voices");
-  if (language) url.searchParams.set("language", language);
-  url.searchParams.set("limit", String(limit));
-
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${config.cartesia.apiKey}`,
-      "X-API-Key": config.cartesia.apiKey,
-      "Cartesia-Version": config.cartesia.version
-    }
-  });
-
-  const text = await response.text();
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = text;
-  }
-
-  if (!response.ok) {
-    const error = new Error(`Cartesia voices failed ${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
-    error.status = response.status;
-    throw error;
-  }
-
-  const voices = Array.isArray(body) ? body : (body.voices || body.data || []);
-  return voices.map((voice) => ({
-    id: voice.id,
-    name: voice.name,
-    description: voice.description,
-    language: voice.language || voice.languages,
-    gender: voice.gender,
-    isOwner: voice.is_owner,
-    isPublic: voice.is_public
-  }));
 }
 
 app.get("/admin/status", requireAdmin, async (_req, res) => {
@@ -496,13 +242,6 @@ app.get("/admin/logs", requireAdmin, (_req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
-
-app.get("/admin/call-lifecycle", requireAdmin, (req, res) => {
-  res.json({
-    ok: true,
-    calls: recentCallLifecycle(Number(req.query.limit) || 20)
-  });
 });
 
 app.get("/debug/logs", requireAdmin, (_req, res) => {
@@ -667,73 +406,6 @@ async function testOpenAIRealtime() {
   });
 }
 
-async function testOpenAIRealtimeDetailed() {
-  return new Promise((resolve, reject) => {
-    const model = config.openai.realtimeModel;
-    const startedAt = Date.now();
-    const events = [];
-    const ws = new WebSocket(
-      `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`,
-      { headers: { Authorization: `Bearer ${config.openai.apiKey}` } }
-    );
-
-    const timer = setTimeout(() => {
-      events.push({ type: "timeout", elapsedMs: Date.now() - startedAt });
-      ws.close();
-      reject(new Error(`OpenAI realtime timeout: ${JSON.stringify(events)}`));
-    }, 12000);
-
-    ws.on("open", () => {
-      events.push({ type: "open", elapsedMs: Date.now() - startedAt });
-      ws.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          type: "realtime",
-          model,
-          output_modalities: ["audio"],
-          audio: {
-            input: { format: { type: "audio/pcmu" } },
-            output: { format: { type: "audio/pcmu" }, voice: config.openai.voice }
-          }
-        }
-      }));
-    });
-
-    ws.on("message", (raw) => {
-      let event;
-      try {
-        event = JSON.parse(raw.toString());
-      } catch {
-        event = { type: "unparseable" };
-      }
-
-      events.push({
-        type: event.type,
-        error: event.error,
-        elapsedMs: Date.now() - startedAt
-      });
-
-      if (event.type === "session.created" || event.type === "session.updated") {
-        clearTimeout(timer);
-        ws.close();
-        resolve({ ok: true, model, voice: config.openai.voice, events });
-      }
-
-      if (event.type === "error") {
-        clearTimeout(timer);
-        ws.close();
-        reject(new Error(`OpenAI realtime error: ${JSON.stringify(event.error)}`));
-      }
-    });
-
-    ws.on("error", (error) => {
-      clearTimeout(timer);
-      events.push({ type: "error", message: error.message, elapsedMs: Date.now() - startedAt });
-      reject(error);
-    });
-  });
-}
-
 async function testTwilioApi() {
   if (!config.twilio.accountSid || !config.twilio.authToken || !config.twilio.fromNumber) {
     return "Twilio non configurato, test saltato";
@@ -765,17 +437,13 @@ async function updateTwilioWebhook(baseUrl = config.publicBaseUrl) {
 
   const updated = await client.incomingPhoneNumbers(numbers[0].sid).update({
     voiceUrl: `${baseUrl}/twilio/voice`,
-    voiceMethod: "POST",
-    statusCallback: `${baseUrl}/twilio/status`,
-    statusCallbackMethod: "POST"
+    voiceMethod: "POST"
   });
 
   return {
     phoneNumber: updated.phoneNumber,
     voiceUrl: updated.voiceUrl,
-    voiceMethod: updated.voiceMethod,
-    statusCallback: updated.statusCallback,
-    statusCallbackMethod: updated.statusCallbackMethod
+    voiceMethod: updated.voiceMethod
   };
 }
 
@@ -799,7 +467,7 @@ async function createTestCall(baseUrl = config.publicBaseUrl) {
   };
 }
 
-async function createCartesiaDemoCall({ baseUrl = config.publicBaseUrl, to, modelId, voiceId, text } = {}) {
+async function createCartesiaDemoCall({ baseUrl = config.publicBaseUrl, to } = {}) {
   if (!config.cartesia.apiKey) {
     throw new Error("Manca CARTESIA_API_KEY su Render.");
   }
@@ -807,7 +475,7 @@ async function createCartesiaDemoCall({ baseUrl = config.publicBaseUrl, to, mode
     throw new Error("Twilio non configurato.");
   }
 
-  await saveCartesiaDemoAudio({ modelId, voiceId, text });
+  await saveCartesiaDemoAudio();
 
   const destination = to || config.twilio.sellerWhatsappTo.replace(/^whatsapp:/, "");
   const client = twilio(config.twilio.accountSid, config.twilio.authToken);
@@ -922,19 +590,6 @@ app.get("/admin/self-test", requireAdmin, async (_req, res) => {
   });
 });
 
-app.get("/admin/openai-realtime-check", requireAdmin, async (_req, res) => {
-  try {
-    const result = await testOpenAIRealtimeDetailed();
-    res.json(result);
-  } catch (error) {
-    logEvent("openai_realtime_check_failed", { error: error.message });
-    res.status(500).json({
-      ok: false,
-      error: error.message
-    });
-  }
-});
-
 app.get("/admin/twilio-available-numbers", requireAdmin, async (req, res) => {
   try {
     const numbers = await searchAvailableTwilioNumbers(req.query);
@@ -1007,20 +662,6 @@ app.post("/admin/update-twilio-webhook", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/admin/update-twilio-webhook", requireAdmin, async (req, res) => {
-  try {
-    const updated = await updateTwilioWebhook(req.query.baseUrl || config.publicBaseUrl);
-    logEvent("twilio_webhook_updated", updated);
-    res.json({ ok: true, updated });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message,
-      code: error.code
-    });
-  }
-});
-
 app.post("/admin/test-call", requireAdmin, async (req, res) => {
   try {
     const call = await createTestCall(req.query.baseUrl || config.publicBaseUrl);
@@ -1039,10 +680,7 @@ app.get("/admin/cartesia-demo-call", requireAdmin, async (req, res) => {
   try {
     const call = await createCartesiaDemoCall({
       baseUrl: req.query.baseUrl || config.publicBaseUrl,
-      to: req.query.to,
-      modelId: req.query.modelId,
-      voiceId: req.query.voiceId,
-      text: req.query.text
+      to: req.query.to
     });
     logEvent("cartesia_demo_call_created", call);
     res.json({ ok: true, call });
@@ -1055,39 +693,15 @@ app.get("/admin/cartesia-demo-call", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/admin/cartesia-demo-audio-check", requireAdmin, async (req, res) => {
+app.get("/admin/cartesia-demo-audio-check", requireAdmin, async (_req, res) => {
   try {
-    const audio = await saveCartesiaDemoAudio({
-      modelId: req.query.modelId,
-      voiceId: req.query.voiceId,
-      text: req.query.text
-    });
+    const audio = await saveCartesiaDemoAudio();
     res.json({
       ok: true,
-      voiceId: req.query.voiceId || config.cartesia.voiceId,
-      modelId: req.query.modelId || config.cartesia.modelId,
+      voiceId: config.cartesia.voiceId,
+      modelId: config.cartesia.modelId,
       contentType: audio.contentType,
       bytes: audio.buffer.length
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message,
-      status: error.status
-    });
-  }
-});
-
-app.get("/admin/cartesia-voices", requireAdmin, async (req, res) => {
-  try {
-    const voices = await listCartesiaVoices({
-      language: req.query.language || "it",
-      limit: req.query.limit || 50
-    });
-    res.json({
-      ok: true,
-      count: voices.length,
-      voices
     });
   } catch (error) {
     res.status(500).json({
@@ -1329,14 +943,39 @@ app.post("/twilio/voice", (req, res) => {
     from: req.body?.From,
     to: req.body?.To
   });
-  registerIncomingCall(req.body || {});
 
-  const httpBaseUrl = baseUrlFromRequest(req);
   const response = new twilio.twiml.VoiceResponse();
+  const connect = response.connect();
+  const httpBaseUrl = baseUrlFromRequest(req);
   const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
-  const connect = response.connect();
+  if (req.body?.CallSid && config.twilio.accountSid && config.twilio.authToken) {
+    const client = twilio(config.twilio.accountSid, config.twilio.authToken);
+    client.calls(req.body.CallSid).recordings.create({
+      recordingChannels: "dual",
+      recordingStatusCallback: `${httpBaseUrl}/twilio/recording-status`,
+      recordingStatusCallbackMethod: "POST",
+      recordingStatusCallbackEvent: ["in-progress", "completed", "absent"]
+    }).then((recording) => {
+      logEvent("twilio_recording_started", {
+        callSid: req.body?.CallSid,
+        recordingSid: recording.sid
+      });
+    }).catch((error) => {
+      logEvent("twilio_recording_start_failed", {
+        callSid: req.body?.CallSid,
+        error: error.message,
+        code: error.code
+      });
+      alertSeller("twilio_recording_start_failed", {
+        message: error.message,
+        code: error.code,
+        callSid: req.body?.CallSid,
+        from: req.body?.From
+      });
+    });
+  }
   const stream = connect.stream({
     url: `${wsUrl}/twilio/media`,
     statusCallback: `${httpBaseUrl}/twilio/stream-status`,
@@ -1346,19 +985,7 @@ app.post("/twilio/voice", (req, res) => {
   stream.parameter({ name: "from", value: req.body?.From || "" });
   stream.parameter({ name: "to", value: req.body?.To || "" });
 
-  const twiml = response.toString();
-  logEvent("twilio_voice_twiml_generated", {
-    callSid: req.body?.CallSid,
-    mode: "openai_realtime_media_stream",
-    streamUrl: `${wsUrl}/twilio/media`
-  });
-  res.type("text/xml").send(twiml);
-
-  startCallRecordingAfterResponse({
-    callSid: req.body?.CallSid,
-    from: req.body?.From,
-    httpBaseUrl
-  });
+  res.type("text/xml").send(response.toString());
 });
 
 app.post("/twilio/voice-greeting", (req, res) => {
@@ -1378,51 +1005,6 @@ app.post("/twilio/voice-greeting", (req, res) => {
     language: "it-IT",
     voice: "Polly.Giorgio"
   }, "Test saluto completato.");
-
-  res.type("text/xml").send(response.toString());
-});
-
-app.post("/twilio/gather", async (req, res) => {
-  const callSid = req.body?.CallSid;
-  const from = req.body?.From || req.body?.Caller;
-  const speech = String(req.body?.SpeechResult || "").trim();
-  const httpBaseUrl = baseUrlFromRequest(req);
-
-  logEvent("twilio_gather_result", {
-    callSid,
-    from,
-    speech,
-    confidence: req.body?.Confidence
-  });
-
-  const response = new twilio.twiml.VoiceResponse();
-
-  if (!speech) {
-    sayWithGather(response, {
-      actionUrl: `${httpBaseUrl}/twilio/gather`,
-      text: "Mi scusi, non ho sentito bene. Mi ripete per favore?"
-    });
-    response.redirect({ method: "POST" }, `${httpBaseUrl}/twilio/gather`);
-    res.type("text/xml").send(response.toString());
-    return;
-  }
-
-  if (isClearGoodbye(speech)) {
-    response.say({
-      language: "it-IT",
-      voice: "Polly.Giorgio"
-    }, "Grazie per aver contattato Expocar Italia. A presto.");
-    response.hangup();
-    res.type("text/xml").send(response.toString());
-    return;
-  }
-
-  const reply = await generateTurnBasedReply({ callSid, from, speech });
-  sayWithGather(response, {
-    actionUrl: `${httpBaseUrl}/twilio/gather`,
-    text: reply
-  });
-  response.redirect({ method: "POST" }, `${httpBaseUrl}/twilio/gather`);
 
   res.type("text/xml").send(response.toString());
 });
@@ -1465,7 +1047,7 @@ app.get("/cartesia/demo-audio.mp3", async (_req, res) => {
   }
 });
 
-app.post("/twilio/status", async (req, res) => {
+app.post("/twilio/status", (req, res) => {
   logEvent("twilio_status", {
     callSid: req.body?.CallSid,
     callStatus: req.body?.CallStatus,
@@ -1473,20 +1055,11 @@ app.post("/twilio/status", async (req, res) => {
     from: req.body?.From,
     to: req.body?.To
   });
-  await markCallStatus(req.body || {});
-  if (["completed", "failed", "busy", "no-answer", "canceled"].includes(String(req.body?.CallStatus || "").toLowerCase())) {
-    await finalizeTurnBasedCall({
-      callSid: req.body?.CallSid,
-      from: req.body?.From
-    });
-    cleanupVoiceConversation(req.body?.CallSid);
-  }
   res.json({ ok: true });
 });
 
 app.post("/twilio/stream-status", (req, res) => {
   logEvent("twilio_stream_status", req.body || {});
-  markStreamStatus(req.body || {});
   res.json({ ok: true });
 });
 

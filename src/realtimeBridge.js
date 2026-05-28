@@ -56,7 +56,6 @@ function greetingForRome() {
 async function sendFinalCallSummary(session) {
   if (session.summarySent) return;
   session.summarySent = true;
-
   const body = await buildSellerCallSummary(session);
   saveLead({
     type: "call_summary",
@@ -196,7 +195,9 @@ export async function acceptOpenAISipCall(callId) {
 export function monitorOpenAISipCall(callId) {
   const openaiWs = new WebSocket(
     `wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(callId)}`,
-    { headers: openAIHeaders() }
+    {
+      headers: openAIHeaders()
+    }
   );
 
   openaiWs.on("open", () => {
@@ -211,6 +212,7 @@ export function monitorOpenAISipCall(callId) {
 
   openaiWs.on("message", async (raw) => {
     const event = safeJsonParse(raw);
+
     if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
       await handleRealtimeToolCall(event, openaiWs);
     }
@@ -247,7 +249,9 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
   const openaiWs = new WebSocket(
     `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(config.openai.realtimeModel)}`,
-    { headers: openAIHeaders() }
+    {
+      headers: openAIHeaders()
+    }
   );
 
   function sendQuickAudio(instructions) {
@@ -341,15 +345,12 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         type: "input_audio_buffer.append",
         audio: message.media.payload
       }));
-      return;
     }
 
     if (message.event === "stop") {
       logEvent("twilio_media_stop", { streamSid });
       sendFinalCallSummary(session);
-      if (openaiWs.readyState === WebSocket.OPEN || openaiWs.readyState === WebSocket.CONNECTING) {
-        openaiWs.close();
-      }
+      openaiWs.close();
     }
   });
 
@@ -357,8 +358,12 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     const event = safeJsonParse(raw);
 
     if (event.type === "error") {
-      logEvent("openai_realtime_server_error", { error: event.error });
-      if (["response_cancel_not_active", "conversation_already_has_active_response"].includes(event.error?.code)) return;
+      logEvent("openai_realtime_server_error", {
+        error: event.error
+      });
+      if (["response_cancel_not_active", "conversation_already_has_active_response"].includes(event.error?.code)) {
+        return;
+      }
       alertSeller("openai_realtime_server_error", {
         message: event.error?.message,
         code: event.error?.code,
@@ -400,27 +405,32 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       if (responseInProgress && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(JSON.stringify({ type: "response.cancel" }));
       }
-      if (streamSid && twilioWs.readyState === WebSocket.OPEN) {
-        twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
+      if (streamSid) {
+        twilioWs.send(JSON.stringify({
+          event: "clear",
+          streamSid
+        }));
       }
       return;
     }
 
     const audioDelta = event.delta || event.audio;
-    if ((event.type === "response.output_audio.delta" || event.type === "response.audio.delta") && audioDelta && streamSid) {
+    if ((
+      event.type === "response.output_audio.delta"
+      || event.type === "response.audio.delta"
+      || event.type === "response.audio.delta"
+    ) && audioDelta && streamSid) {
       lastAssistantAudioAt = Date.now();
       resetSilenceTimer();
       audioDeltaCount += 1;
       if (audioDeltaCount <= 3) {
         logEvent("openai_audio_delta", { count: audioDeltaCount, eventType: event.type });
       }
-      if (twilioWs.readyState === WebSocket.OPEN) {
-        twilioWs.send(JSON.stringify({
-          event: "media",
-          streamSid,
-          media: { payload: audioDelta }
-        }));
-      }
+      twilioWs.send(JSON.stringify({
+        event: "media",
+        streamSid,
+        media: { payload: audioDelta }
+      }));
       return;
     }
 
@@ -468,15 +478,10 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   twilioWs.on("close", () => {
     clearTimeout(silenceTimer);
     sendFinalCallSummary(session);
-    if (openaiWs.readyState === WebSocket.OPEN || openaiWs.readyState === WebSocket.CONNECTING) {
-      openaiWs.close();
-    }
+    openaiWs.close();
   });
-
   openaiWs.on("close", () => {
     clearTimeout(silenceTimer);
-    if (twilioWs.readyState === WebSocket.OPEN) {
-      twilioWs.close();
-    }
+    twilioWs.close();
   });
 }
