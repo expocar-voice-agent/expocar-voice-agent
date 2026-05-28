@@ -7,6 +7,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import twilio from "twilio";
 import { google } from "googleapis";
 import { config } from "./config.js";
+import { agentInstructions } from "./agentPrompt.js";
 import { acceptOpenAISipCall, bridgeTwilioToOpenAI, monitorOpenAISipCall } from "./realtimeBridge.js";
 import { bridgeTwilioToCartesiaDemo } from "./cartesiaBridge.js";
 import { searchInventory } from "./inventory.js";
@@ -18,6 +19,7 @@ import { alertSeller } from "./alerts.js";
 import { markCallStatus, markStreamStatus, recentCallLifecycle, registerIncomingCall } from "./callLifecycle.js";
 
 const app = express();
+const voiceConversations = new Map();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -134,6 +136,125 @@ function verifyRecordingAccess(req, recordingSid) {
   const tokenBuffer = Buffer.from(token);
   const expectedBuffer = Buffer.from(expected);
   return tokenBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
+}
+
+function getVoiceConversation(callSid) {
+  if (!callSid) return [];
+  if (!voiceConversations.has(callSid)) voiceConversations.set(callSid, []);
+  return voiceConversations.get(callSid);
+}
+
+function cleanupVoiceConversation(callSid) {
+  if (callSid) voiceConversations.delete(callSid);
+}
+
+function sayWithGather(response, { actionUrl, text }) {
+  const gather = response.gather({
+    input: "speech",
+    action: actionUrl,
+    method: "POST",
+    language: "it-IT",
+    speechTimeout: "auto",
+    timeout: 6,
+    actionOnEmptyResult: true
+  });
+  gather.say({
+    language: "it-IT",
+    voice: "Polly.Giorgio"
+  }, text);
+}
+
+function trimForVoice(text, maxLength = 700) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (clean.length <= maxLength) return clean;
+  return `${clean.slice(0, maxLength - 3)}...`;
+}
+
+async function generateTurnBasedReply({ callSid, from, speech }) {
+  const history = getVoiceConversation(callSid);
+  if (speech) history.push({ role: "user", content: speech });
+
+  const input = [
+    ...history.slice(-8),
+    {
+      role: "user",
+      content: "Rispondi al cliente al telefono in massimo due frasi e poi fai una domanda utile per proseguire. Non dire di essere un'intelligenza artificiale."
+    }
+  ];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.openai.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: config.openai.summaryModel,
+        instructions: agentInstructions,
+        input,
+        max_output_tokens: 220
+      })
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`OpenAI turn reply failed ${response.status}: ${body.slice(0, 500)}`);
+    }
+
+    const body = await response.json();
+    const text = trimForVoice(body.output_text || "Mi dica pure, la ascolto.");
+    history.push({ role: "assistant", content: text });
+    logEvent("twilio_turn_reply_generated", {
+      callSid,
+      from,
+      speech: trimForVoice(speech, 300),
+      reply: text
+    });
+    return text;
+  } catch (error) {
+    logEvent("twilio_turn_reply_failed", {
+      callSid,
+      from,
+      error: error.message
+    });
+    alertSeller("twilio_turn_reply_failed", {
+      message: error.message,
+      callSid,
+      from
+    });
+    return "Mi scusi, sto avendo un piccolo rallentamento tecnico. Mi dica nome, numero e richiesta principale: la faccio ricontattare subito da un consulente.";
+  }
+}
+
+async function finalizeTurnBasedCall({ callSid, from }) {
+  const history = getVoiceConversation(callSid);
+  if (!history.length) return;
+
+  const transcript = history
+    .map((item) => `${item.role === "assistant" ? "Marco" : "Cliente"}: ${item.content}`)
+    .join("\n");
+
+  try {
+    await notifySeller({
+      body: [
+        "Riepilogo chiamata Expocar",
+        callSid ? `Call SID: ${callSid}` : "",
+        from ? `Da: ${from}` : "",
+        "",
+        trimForVoice(transcript, 1400)
+      ].filter(Boolean).join("\n")
+    });
+    logEvent("twilio_turn_summary_sent", { callSid, from });
+  } catch (error) {
+    logEvent("twilio_turn_summary_failed", { callSid, from, error: error.message });
+  }
+
+  try {
+    await sendCustomerAfterCallWhatsapp({ to: from });
+  } catch (error) {
+    logEvent("twilio_turn_customer_whatsapp_failed", { callSid, from, error: error.message });
+  }
 }
 
 function startCallRecordingAfterResponse({ callSid, from, httpBaseUrl }) {
@@ -1148,28 +1269,23 @@ app.post("/twilio/voice", (req, res) => {
   });
   registerIncomingCall(req.body || {});
 
-  const response = new twilio.twiml.VoiceResponse();
-  response.say({
-    language: "it-IT",
-    voice: "Polly.Giorgio"
-  }, "Expocar Italia, un attimo.");
-  response.pause({ length: 1 });
-  const connect = response.connect();
   const httpBaseUrl = baseUrlFromRequest(req);
-  const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
-  const wsProtocol = proto === "https" ? "wss" : "ws";
-  const wsUrl = `${wsProtocol}://${req.get("host")}`;
-  const stream = connect.stream({
-    url: `${wsUrl}/twilio/media`
+  const response = new twilio.twiml.VoiceResponse();
+  sayWithGather(response, {
+    actionUrl: `${httpBaseUrl}/twilio/gather`,
+    text: `${new Intl.DateTimeFormat("it-IT", {
+      timeZone: config.business.timezone,
+      hour: "2-digit",
+      hour12: false
+    }).format(new Date()) < 13 ? "Buongiorno" : "Buon pomeriggio"}, Expocar Italia, sono Marco. In cosa posso esserle utile?`
   });
-  stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
-  stream.parameter({ name: "from", value: req.body?.From || "" });
-  stream.parameter({ name: "to", value: req.body?.To || "" });
+  response.redirect({ method: "POST" }, `${httpBaseUrl}/twilio/gather`);
 
   const twiml = response.toString();
   logEvent("twilio_voice_twiml_generated", {
     callSid: req.body?.CallSid,
-    streamUrl: `${wsUrl}/twilio/media`
+    mode: "turn_based_gather",
+    actionUrl: `${httpBaseUrl}/twilio/gather`
   });
   res.type("text/xml").send(twiml);
 
@@ -1197,6 +1313,51 @@ app.post("/twilio/voice-greeting", (req, res) => {
     language: "it-IT",
     voice: "Polly.Giorgio"
   }, "Test saluto completato.");
+
+  res.type("text/xml").send(response.toString());
+});
+
+app.post("/twilio/gather", async (req, res) => {
+  const callSid = req.body?.CallSid;
+  const from = req.body?.From || req.body?.Caller;
+  const speech = String(req.body?.SpeechResult || "").trim();
+  const httpBaseUrl = baseUrlFromRequest(req);
+
+  logEvent("twilio_gather_result", {
+    callSid,
+    from,
+    speech,
+    confidence: req.body?.Confidence
+  });
+
+  const response = new twilio.twiml.VoiceResponse();
+
+  if (!speech) {
+    sayWithGather(response, {
+      actionUrl: `${httpBaseUrl}/twilio/gather`,
+      text: "Mi scusi, non ho sentito bene. Mi ripete per favore?"
+    });
+    response.redirect({ method: "POST" }, `${httpBaseUrl}/twilio/gather`);
+    res.type("text/xml").send(response.toString());
+    return;
+  }
+
+  if (/\b(arrivederci|grazie\s+ciao|ciao|buona\s+giornata|a\s+presto)\b/i.test(speech)) {
+    response.say({
+      language: "it-IT",
+      voice: "Polly.Giorgio"
+    }, "Grazie per aver contattato Expocar Italia. A presto.");
+    response.hangup();
+    res.type("text/xml").send(response.toString());
+    return;
+  }
+
+  const reply = await generateTurnBasedReply({ callSid, from, speech });
+  sayWithGather(response, {
+    actionUrl: `${httpBaseUrl}/twilio/gather`,
+    text: reply
+  });
+  response.redirect({ method: "POST" }, `${httpBaseUrl}/twilio/gather`);
 
   res.type("text/xml").send(response.toString());
 });
@@ -1248,6 +1409,13 @@ app.post("/twilio/status", async (req, res) => {
     to: req.body?.To
   });
   await markCallStatus(req.body || {});
+  if (["completed", "failed", "busy", "no-answer", "canceled"].includes(String(req.body?.CallStatus || "").toLowerCase())) {
+    await finalizeTurnBasedCall({
+      callSid: req.body?.CallSid,
+      from: req.body?.From
+    });
+    cleanupVoiceConversation(req.body?.CallSid);
+  }
   res.json({ ok: true });
 });
 
