@@ -135,6 +135,47 @@ function verifyRecordingAccess(req, recordingSid) {
   return tokenBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
 }
 
+async function generateCartesiaDemoAudio() {
+  const transcript = config.cartesia.demoText || "Buongiorno, Expocar Italia, sono Marco. Non si preoccupi, penso a tutto io. Mi dica pure che auto sta cercando e la aiuto subito a trovare la soluzione migliore.";
+  const response = await fetch("https://api.cartesia.ai/tts/bytes", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.cartesia.apiKey}`,
+      "X-API-Key": config.cartesia.apiKey,
+      "Cartesia-Version": config.cartesia.version,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model_id: config.cartesia.modelId,
+      transcript,
+      voice: {
+        id: config.cartesia.voiceId,
+        mode: "id"
+      },
+      language: "it",
+      output_format: {
+        container: "mp3",
+        bit_rate: 64000
+      },
+      generation_config: {
+        speed: 1.12
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    const error = new Error(`Cartesia audio failed ${response.status}: ${body.slice(0, 500)}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  return {
+    contentType: response.headers.get("content-type") || "audio/mpeg",
+    buffer: Buffer.from(await response.arrayBuffer())
+  };
+}
+
 app.get("/admin/status", requireAdmin, async (_req, res) => {
   const sipUri = config.openai.projectId
     ? `sip:${config.openai.projectId}@sip.api.openai.com;transport=tls`
@@ -939,21 +980,39 @@ app.post("/twilio/cartesia-demo", (req, res) => {
   });
 
   const response = new twilio.twiml.VoiceResponse();
-  const connect = response.connect();
   const httpBaseUrl = baseUrlFromRequest(req);
-  const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
-  const wsProtocol = proto === "https" ? "wss" : "ws";
-  const wsUrl = `${wsProtocol}://${req.get("host")}`;
-  const stream = connect.stream({
-    url: `${wsUrl}/cartesia/demo-media`,
-    statusCallback: `${httpBaseUrl}/twilio/stream-status`,
-    statusCallbackMethod: "POST"
-  });
-  stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
-  stream.parameter({ name: "from", value: req.body?.From || "" });
-  stream.parameter({ name: "to", value: req.body?.To || "" });
+  response.play(`${httpBaseUrl}/cartesia/demo-audio.mp3?t=${Date.now()}`);
+  response.pause({ length: 1 });
 
   res.type("text/xml").send(response.toString());
+});
+
+app.get("/cartesia/demo-audio.mp3", async (_req, res) => {
+  try {
+    if (!config.cartesia.apiKey) {
+      res.status(500).send("CARTESIA_API_KEY mancante.");
+      return;
+    }
+
+    const audio = await generateCartesiaDemoAudio();
+    logEvent("cartesia_demo_audio_generated", {
+      contentType: audio.contentType,
+      bytes: audio.buffer.length
+    });
+    res.setHeader("Content-Type", audio.contentType);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(audio.buffer);
+  } catch (error) {
+    logEvent("cartesia_demo_audio_error", {
+      message: error.message,
+      status: error.status
+    });
+    alertSeller("cartesia_demo_audio_error", {
+      message: error.message,
+      code: error.status
+    });
+    res.status(500).send("Errore generazione audio Cartesia.");
+  }
 });
 
 app.post("/twilio/status", (req, res) => {

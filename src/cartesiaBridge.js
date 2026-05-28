@@ -123,7 +123,9 @@ export function bridgeTwilioToCartesiaDemo(twilioWs) {
 
   cartesiaWs = new WebSocket(buildCartesiaUrl(), {
     headers: {
-      "X-API-Key": config.cartesia.apiKey
+      Authorization: `Bearer ${config.cartesia.apiKey}`,
+      "X-API-Key": config.cartesia.apiKey,
+      "Cartesia-Version": config.cartesia.version
     }
   });
 
