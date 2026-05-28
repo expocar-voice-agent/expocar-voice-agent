@@ -8,6 +8,7 @@ import twilio from "twilio";
 import { google } from "googleapis";
 import { config } from "./config.js";
 import { acceptOpenAISipCall, bridgeTwilioToOpenAI, monitorOpenAISipCall } from "./realtimeBridge.js";
+import { bridgeTwilioToCartesiaDemo } from "./cartesiaBridge.js";
 import { searchInventory } from "./inventory.js";
 import { getAvailableSlots } from "./calendar.js";
 import { readRecentLeads } from "./leads.js";
@@ -111,6 +112,29 @@ function verifyOpenAIWebhook(req) {
   return ok ? { ok: true } : { ok: false, error: "invalid webhook signature" };
 }
 
+function baseUrlFromRequest(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0];
+  const proto = forwardedProto || (req.get("host")?.includes("trycloudflare.com") ? "https" : req.protocol);
+  return `${proto}://${req.get("host")}`;
+}
+
+function recordingAccessToken(recordingSid) {
+  const secret = config.adminToken || config.twilio.authToken || config.openai.apiKey;
+  return crypto
+    .createHmac("sha256", secret)
+    .update(String(recordingSid || ""))
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function verifyRecordingAccess(req, recordingSid) {
+  const token = String(req.query.token || "");
+  const expected = recordingAccessToken(recordingSid);
+  const tokenBuffer = Buffer.from(token);
+  const expectedBuffer = Buffer.from(expected);
+  return tokenBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(tokenBuffer, expectedBuffer);
+}
+
 app.get("/admin/status", requireAdmin, async (_req, res) => {
   const sipUri = config.openai.projectId
     ? `sip:${config.openai.projectId}@sip.api.openai.com;transport=tls`
@@ -133,6 +157,12 @@ app.get("/admin/status", requireAdmin, async (_req, res) => {
       configured: Boolean(config.twilio.accountSid && config.twilio.authToken && config.twilio.fromNumber),
       fromNumber: config.twilio.fromNumber,
       whatsappConfigured: Boolean(config.twilio.whatsappFrom)
+    },
+    cartesia: {
+      configured: Boolean(config.cartesia.apiKey),
+      modelId: config.cartesia.modelId,
+      voiceId: config.cartesia.voiceId,
+      version: config.cartesia.version
     },
     inventory: { configured: Boolean(config.multigestionale.userApi) },
     googleCalendar: {
@@ -380,6 +410,34 @@ async function createTestCall(baseUrl = config.publicBaseUrl) {
   };
 }
 
+async function createCartesiaDemoCall({ baseUrl = config.publicBaseUrl, to } = {}) {
+  if (!config.cartesia.apiKey) {
+    throw new Error("Manca CARTESIA_API_KEY su Render.");
+  }
+  if (!config.twilio.accountSid || !config.twilio.authToken || !config.twilio.fromNumber) {
+    throw new Error("Twilio non configurato.");
+  }
+
+  const destination = to || config.twilio.sellerWhatsappTo.replace(/^whatsapp:/, "");
+  const client = twilio(config.twilio.accountSid, config.twilio.authToken);
+  const call = await client.calls.create({
+    from: config.twilio.fromNumber,
+    to: destination,
+    url: `${baseUrl}/twilio/cartesia-demo`,
+    method: "POST",
+    statusCallback: `${baseUrl}/twilio/status`,
+    statusCallbackMethod: "POST",
+    statusCallbackEvent: ["initiated", "ringing", "answered", "completed"]
+  });
+
+  return {
+    sid: call.sid,
+    status: call.status,
+    from: call.from,
+    to: call.to
+  };
+}
+
 function serializeTwilioNumber(number) {
   return {
     phoneNumber: number.phoneNumber,
@@ -549,6 +607,23 @@ app.post("/admin/test-call", requireAdmin, async (req, res) => {
   try {
     const call = await createTestCall(req.query.baseUrl || config.publicBaseUrl);
     logEvent("twilio_test_call_created", call);
+    res.json({ ok: true, call });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message,
+      code: error.code
+    });
+  }
+});
+
+app.get("/admin/cartesia-demo-call", requireAdmin, async (req, res) => {
+  try {
+    const call = await createCartesiaDemoCall({
+      baseUrl: req.query.baseUrl || config.publicBaseUrl,
+      to: req.query.to
+    });
+    logEvent("cartesia_demo_call_created", call);
     res.json({ ok: true, call });
   } catch (error) {
     res.status(500).json({
@@ -793,11 +868,10 @@ app.post("/twilio/voice", (req, res) => {
 
   const response = new twilio.twiml.VoiceResponse();
   const connect = response.connect();
-  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0];
-  const proto = forwardedProto || (req.get("host")?.includes("trycloudflare.com") ? "https" : req.protocol);
+  const httpBaseUrl = baseUrlFromRequest(req);
+  const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
-  const httpBaseUrl = `${proto}://${req.get("host")}`;
   if (req.body?.CallSid && config.twilio.accountSid && config.twilio.authToken) {
     const client = twilio(config.twilio.accountSid, config.twilio.authToken);
     client.calls(req.body.CallSid).recordings.create({
@@ -857,6 +931,31 @@ app.post("/twilio/voice-greeting", (req, res) => {
   res.type("text/xml").send(response.toString());
 });
 
+app.post("/twilio/cartesia-demo", (req, res) => {
+  logEvent("twilio_cartesia_demo_webhook", {
+    callSid: req.body?.CallSid,
+    from: req.body?.From,
+    to: req.body?.To
+  });
+
+  const response = new twilio.twiml.VoiceResponse();
+  const connect = response.connect();
+  const httpBaseUrl = baseUrlFromRequest(req);
+  const proto = httpBaseUrl.startsWith("https://") ? "https" : "http";
+  const wsProtocol = proto === "https" ? "wss" : "ws";
+  const wsUrl = `${wsProtocol}://${req.get("host")}`;
+  const stream = connect.stream({
+    url: `${wsUrl}/cartesia/demo-media`,
+    statusCallback: `${httpBaseUrl}/twilio/stream-status`,
+    statusCallbackMethod: "POST"
+  });
+  stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
+  stream.parameter({ name: "from", value: req.body?.From || "" });
+  stream.parameter({ name: "to", value: req.body?.To || "" });
+
+  res.type("text/xml").send(response.toString());
+});
+
 app.post("/twilio/status", (req, res) => {
   logEvent("twilio_status", {
     callSid: req.body?.CallSid,
@@ -871,6 +970,50 @@ app.post("/twilio/status", (req, res) => {
 app.post("/twilio/stream-status", (req, res) => {
   logEvent("twilio_stream_status", req.body || {});
   res.json({ ok: true });
+});
+
+app.get("/recordings/:recordingSid.mp3", async (req, res) => {
+  const recordingSid = req.params.recordingSid;
+  try {
+    if (!verifyRecordingAccess(req, recordingSid)) {
+      res.status(401).send("Link registrazione non valido.");
+      return;
+    }
+
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${config.twilio.accountSid}/Recordings/${recordingSid}.mp3`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${config.twilio.accountSid}:${config.twilio.authToken}`).toString("base64")}`
+      }
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      logEvent("twilio_recording_proxy_failed", {
+        recordingSid,
+        status: response.status,
+        body: body.slice(0, 500)
+      });
+      res.status(response.status).send("Registrazione non ancora disponibile o non trovata.");
+      return;
+    }
+
+    res.setHeader("Content-Type", response.headers.get("content-type") || "audio/mpeg");
+    res.setHeader("Content-Disposition", `inline; filename="${recordingSid}.mp3"`);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    const arrayBuffer = await response.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  } catch (error) {
+    logEvent("twilio_recording_proxy_error", {
+      recordingSid,
+      error: error.message
+    });
+    alertSeller("twilio_recording_proxy_error", {
+      message: error.message,
+      code: error.code
+    });
+    res.status(500).send("Errore durante il recupero della registrazione.");
+  }
 });
 
 app.post("/twilio/recording-status", async (req, res) => {
@@ -888,13 +1031,16 @@ app.post("/twilio/recording-status", async (req, res) => {
 
   if (status === "completed" && recordingUrl) {
     try {
+      const publicRecordingUrl = recordingSid
+        ? `${baseUrlFromRequest(req)}/recordings/${recordingSid}.mp3?token=${recordingAccessToken(recordingSid)}`
+        : `${recordingUrl}.mp3`;
       await notifySeller({
         body: [
           "Registrazione chiamata Expocar disponibile",
           callSid ? `Call SID: ${callSid}` : "",
           recordingSid ? `Recording SID: ${recordingSid}` : "",
           req.body?.RecordingDuration ? `Durata: ${req.body.RecordingDuration} sec` : "",
-          `${recordingUrl}.mp3`
+          publicRecordingUrl
         ].filter(Boolean).join("\n")
       });
     } catch (error) {
@@ -1012,10 +1158,16 @@ app.use((error, req, res, _next) => {
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/twilio/media" });
+const cartesiaDemoWss = new WebSocketServer({ server, path: "/cartesia/demo-media" });
 
 wss.on("connection", (ws) => {
   logEvent("twilio_media_connected");
   bridgeTwilioToOpenAI(ws);
+});
+
+cartesiaDemoWss.on("connection", (ws) => {
+  logEvent("cartesia_demo_media_connected");
+  bridgeTwilioToCartesiaDemo(ws);
 });
 
 server.listen(config.port, () => {

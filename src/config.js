@@ -26,6 +26,13 @@ export const config = {
     speed: optionalNumber("OPENAI_REALTIME_SPEED", 1.2),
     summaryModel: process.env.OPENAI_SUMMARY_MODEL || "gpt-4o-mini"
   },
+  cartesia: {
+    apiKey: process.env.CARTESIA_API_KEY || "",
+    modelId: process.env.CARTESIA_MODEL_ID || "sonic-3",
+    voiceId: process.env.CARTESIA_VOICE_ID || "e07c00bc-4134-4eae-9ea4-1a55fb45746b",
+    version: process.env.CARTESIA_VERSION || "2026-03-01",
+    demoText: process.env.CARTESIA_DEMO_TEXT || ""
+  },
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID || "",
     authToken: process.env.TWILIO_AUTH_TOKEN || "",
