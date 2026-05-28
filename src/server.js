@@ -20,7 +20,7 @@ import { markCallStatus, markStreamStatus, recentCallLifecycle, registerIncoming
 
 const app = express();
 const voiceConversations = new Map();
-const BUILD_VERSION = "2026-05-28-realtime-with-fallback";
+const BUILD_VERSION = "2026-05-28-recording-proxy-stable-restore";
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -1337,7 +1337,7 @@ app.post("/twilio/voice", (req, res) => {
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
   const connect = response.connect();
-const stream = connect.stream({
+  const stream = connect.stream({
     url: `${wsUrl}/twilio/media`,
     statusCallback: `${httpBaseUrl}/twilio/stream-status`,
     statusCallbackMethod: "POST"
@@ -1345,7 +1345,6 @@ const stream = connect.stream({
   stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
   stream.parameter({ name: "from", value: req.body?.From || "" });
   stream.parameter({ name: "to", value: req.body?.To || "" });
-  response.redirect({ method: "POST" }, `${httpBaseUrl}/twilio/realtime-fallback`);
 
   const twiml = response.toString();
   logEvent("twilio_voice_twiml_generated", {
@@ -1380,23 +1379,6 @@ app.post("/twilio/voice-greeting", (req, res) => {
     voice: "Polly.Giorgio"
   }, "Test saluto completato.");
 
-  res.type("text/xml").send(response.toString());
-});
-
-app.post("/twilio/realtime-fallback", (req, res) => {
-  logEvent("twilio_realtime_fallback_entered", {
-    callSid: req.body?.CallSid,
-    from: req.body?.From,
-    to: req.body?.To
-  });
-
-  const httpBaseUrl = baseUrlFromRequest(req);
-  const response = new twilio.twiml.VoiceResponse();
-  sayWithGather(response, {
-    actionUrl: `${httpBaseUrl}/twilio/gather`,
-    text: "Mi scusi per l'attesa, la ascolto. Mi dica pure come posso aiutarla."
-  });
-  response.redirect({ method: "POST" }, `${httpBaseUrl}/twilio/gather`);
   res.type("text/xml").send(response.toString());
 });
 
