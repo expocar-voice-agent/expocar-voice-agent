@@ -6,6 +6,8 @@ import twilio from "twilio";
 import { config } from "./config.js";
 
 function formatRomeDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "orario da verificare";
   return new Intl.DateTimeFormat("it-IT", {
     timeZone: "Europe/Rome",
     weekday: "long",
@@ -14,7 +16,7 @@ function formatRomeDate(value) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit"
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function buildImportSummary(args) {
@@ -49,6 +51,15 @@ function normalizePhone(value) {
   if (number.startsWith("00")) number = `+${number.slice(2)}`;
   if (!number.startsWith("+") && number.startsWith("3")) number = `+39${number}`;
   return number.startsWith("+") ? number : "";
+}
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), ms);
+    })
+  ]);
 }
 
 async function transferActiveCall({ callSid, reason }) {
@@ -219,39 +230,101 @@ export async function runTool(name, args, context = {}) {
   if (name === "controlla_disponibilita") {
     try {
       if (args.requestedStartTime) {
-        const requestedSlot = await checkAppointmentSlot({
-          startTime: args.requestedStartTime,
-          localDate: args.localDate,
-          localTime: args.localTime
-        });
+        const requestedSlot = await withTimeout(
+          checkAppointmentSlot({
+            startTime: args.requestedStartTime,
+            localDate: args.localDate,
+            localTime: args.localTime
+          }),
+          2500,
+          "Google Calendar non ha risposto in tempo."
+        );
         return { requestedSlot, calendarAvailable: true };
       }
-      const slots = await getAvailableSlots(args);
+      const slots = await withTimeout(
+        getAvailableSlots(args),
+        2500,
+        "Google Calendar non ha risposto in tempo."
+      );
       return { slots, calendarAvailable: true };
     } catch (error) {
       saveLead({
         type: "calendar_unavailable",
         requestedDate: args.preferredDate,
+        requestedStartTime: args.requestedStartTime,
+        localDate: args.localDate,
+        localTime: args.localTime,
         error: error.message
       });
+      notifySeller({
+        body: [
+          "Calendario Expocar lento/non disponibile",
+          "Marco deve raccogliere la preferenza e far confermare da un consulente.",
+          args.localDate || args.localTime ? `Richiesta: ${[args.localDate, args.localTime].filter(Boolean).join(" ")}` : "",
+          args.requestedStartTime ? `Orario richiesto: ${args.requestedStartTime}` : "",
+          `Errore: ${error.message}`
+        ].filter(Boolean).join("\n")
+      }).catch(() => {});
       return {
         slots: [],
         calendarAvailable: false,
-        message: "Calendario non disponibile. Raccogli la preferenza del cliente e avvisa che un consulente confermera l'appuntamento."
+        message: "Calendario momentaneamente lento. Non restare in silenzio: raccogli nome, telefono, giorno e ora preferiti; spiega che un consulente confermera subito l'appuntamento."
       };
     }
   }
 
   if (name === "crea_appuntamento") {
-    const appointment = await createAppointment(args);
-    const customerWhatsappTo = normalizeWhatsappNumber(args.whatsappTo || args.phone);
+    let appointment;
+    try {
+      appointment = await withTimeout(
+        createAppointment(args),
+        3500,
+        "Google Calendar non ha creato l'appuntamento in tempo."
+      );
+    } catch (error) {
+      const customerWhatsappTo = normalizeWhatsappNumber(args.whatsappTo || args.phone);
+      saveLead({
+        type: "appointment_pending_confirmation",
+        name: args.name,
+        phone: args.phone,
+        whatsappTo: customerWhatsappTo,
+        interest: args.interest,
+        startTime: args.startTime,
+        localDate: args.localDate,
+        localTime: args.localTime,
+        notes: args.notes,
+        error: error.message
+      });
+      notifySeller({
+        body: [
+          "Appuntamento da confermare manualmente",
+          `Cliente: ${args.name || "non indicato"}`,
+          `Telefono: ${args.phone || "non indicato"}`,
+          `WhatsApp cliente: ${customerWhatsappTo || "non disponibile"}`,
+          `Interesse: ${args.interest || "non indicato"}`,
+          args.localDate || args.localTime ? `Richiesta: ${[args.localDate, args.localTime].filter(Boolean).join(" ")}` : "",
+          args.startTime ? `Orario: ${args.startTime}` : "",
+          args.notes ? `Note: ${args.notes}` : "",
+          `Errore: ${error.message}`
+        ].filter(Boolean).join("\n")
+      }).catch(() => {});
+      return {
+        appointment: null,
+        pendingConfirmation: true,
+        customerWhatsappSentTo: customerWhatsappTo || null,
+        message: "Calendario momentaneamente lento. Non confermare come definitivo: rassicura il cliente, prendi nota e di' che un consulente confermera l'appuntamento a breve."
+      };
+    }
+    const appointmentStart = appointment.start || args.startTime;
+    const customerPhone = args.phone || context.from;
+    const customerWhatsappTo = normalizeWhatsappNumber(args.whatsappTo || customerPhone);
     saveLead({
       type: "appointment",
       name: args.name,
-      phone: args.phone,
+      phone: customerPhone,
       whatsappTo: customerWhatsappTo,
       interest: args.interest,
-      startTime: args.startTime,
+      startTime: appointmentStart,
       notes: args.notes,
       appointment
     });
@@ -259,12 +332,12 @@ export async function runTool(name, args, context = {}) {
       await sendAppointmentWhatsapp({
         to: customerWhatsappTo,
         name: args.name,
-        startTime: args.startTime
+        startTime: appointmentStart
       });
     } catch (error) {
       saveLead({
         type: "whatsapp_customer_failed",
-        phone: args.phone,
+        phone: customerPhone,
         whatsappTo: customerWhatsappTo,
         error: error.message
       });
@@ -274,10 +347,10 @@ export async function runTool(name, args, context = {}) {
         body: [
           "Nuovo appuntamento Expocar",
           `Cliente: ${args.name}`,
-          `Telefono: ${args.phone}`,
+          `Telefono: ${customerPhone}`,
           `WhatsApp cliente: ${customerWhatsappTo || "non disponibile"}`,
           `Interesse: ${args.interest}`,
-          `Orario: ${formatRomeDate(args.startTime)}`,
+          `Orario: ${formatRomeDate(appointmentStart)}`,
           args.notes ? `Note/richieste: ${args.notes}` : "",
           appointment.htmlLink ? `Calendario: ${appointment.htmlLink}` : ""
         ].filter(Boolean).join("\n")
@@ -285,7 +358,7 @@ export async function runTool(name, args, context = {}) {
     } catch (error) {
       saveLead({
         type: "whatsapp_seller_failed",
-        phone: args.phone,
+        phone: customerPhone,
         error: error.message
       });
     }

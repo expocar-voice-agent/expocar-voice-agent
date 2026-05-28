@@ -224,7 +224,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
         to: session?.to
       }),
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 5000);
+        setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 3200);
       })
     ]);
     logEvent("tool_call_done", { name });
