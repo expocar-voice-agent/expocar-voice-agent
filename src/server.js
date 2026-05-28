@@ -181,6 +181,24 @@ function trimForVoice(text, maxLength = 700) {
   return `${clean.slice(0, maxLength - 3)}...`;
 }
 
+function isClearGoodbye(text) {
+  const clean = String(text || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+  if (!clean) return false;
+  const words = clean.split(" ");
+  if (words.length > 5) return false;
+  return [
+    "arrivederci",
+    "ciao",
+    "grazie ciao",
+    "ciao grazie",
+    "grazie arrivederci",
+    "arrivederci grazie",
+    "buona giornata",
+    "buonasera",
+    "a presto"
+  ].includes(clean);
+}
+
 async function generateTurnBasedReply({ callSid, from, speech }) {
   const history = getVoiceConversation(callSid);
   if (speech) history.push({ role: "user", content: speech });
@@ -1353,7 +1371,7 @@ app.post("/twilio/gather", async (req, res) => {
     return;
   }
 
-  if (/\b(arrivederci|grazie\s+ciao|ciao|buona\s+giornata|a\s+presto)\b/i.test(speech)) {
+  if (isClearGoodbye(speech)) {
     response.say({
       language: "it-IT",
       voice: "Polly.Giorgio"
