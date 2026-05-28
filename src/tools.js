@@ -19,6 +19,27 @@ function formatRomeDate(value) {
   }).format(date);
 }
 
+function shortRomeDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "orario da verificare";
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function slimSlot(slot) {
+  if (!slot) return null;
+  return {
+    start: slot.start,
+    label: shortRomeDate(slot.start)
+  };
+}
+
 function buildImportSummary(args) {
   return [
     "Richiesta importazione auto Expocar",
@@ -62,6 +83,19 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
+function hasInventoryFilters(args = {}) {
+  return Boolean(
+    args.brand
+    || args.model
+    || args.fuel
+    || args.gearbox
+    || args.maxBudget
+    || args.maxMileage
+    || args.minYear
+    || args.keyword
+  );
+}
+
 async function transferActiveCall({ callSid, reason }) {
   const client = getTwilioClient();
   const to = normalizePhone(config.twilio.humanTransferTo);
@@ -103,7 +137,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "cerca_auto",
-    description: "Cerca auto disponibili nel parco Expocar tramite MultiGestionale. Da usare sempre prima di dire che un'auto non e disponibile.",
+    description: "Cerca auto nello stock Expocar.",
     parameters: {
       type: "object",
       properties: {
@@ -121,7 +155,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "controlla_disponibilita",
-    description: "Verifica uno slot preciso o trova fino a 3 slot disponibili per appuntamenti in sede.",
+    description: "Controlla disponibilita appuntamenti.",
     parameters: {
       type: "object",
       properties: {
@@ -147,7 +181,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "crea_appuntamento",
-    description: "Crea un appuntamento reale su Google Calendar, invia WhatsApp di conferma al cliente e invia riepilogo WhatsApp al venditore.",
+    description: "Crea appuntamento Google Calendar.",
     parameters: {
       type: "object",
       required: ["name", "phone", "interest", "startTime"],
@@ -166,7 +200,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "registra_richiesta_importazione",
-    description: "Registra una richiesta di importazione auto dall'Europa e invia subito il riepilogo WhatsApp al venditore.",
+    description: "Registra lead importazione auto.",
     parameters: {
       type: "object",
       required: ["summary"],
@@ -193,7 +227,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "trasferisci_chiamata",
-    description: "Trasferisce la telefonata a un consulente umano solo quando il cliente chiede di parlare subito/adesso con una persona. Non usare per fissare appuntamenti con consulente.",
+    description: "Trasferisce solo se il cliente vuole parlare subito con una persona.",
     parameters: {
       type: "object",
       properties: {
@@ -204,7 +238,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "avvisa_venditore",
-    description: "Invia una notifica WhatsApp al venditore per escalation o lead caldo.",
+    description: "Invia nota WhatsApp al venditore.",
     parameters: {
       type: "object",
       required: ["summary"],
@@ -218,6 +252,16 @@ export const realtimeTools = [
 export async function runTool(name, args, context = {}) {
   if (name === "cerca_auto") {
     const inventory = await searchInventoryDetailed(args);
+    if (!hasInventoryFilters(args)) {
+      return {
+        results: [],
+        count: inventory.totalAvailable,
+        shownCount: 0,
+        totalAvailable: inventory.totalAvailable,
+        message: `Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Rispondi solo con il totale e chiedi marca, modello o budget per filtrare.`
+      };
+    }
+
     return {
       results: inventory.results,
       count: inventory.count,
@@ -241,14 +285,31 @@ export async function runTool(name, args, context = {}) {
           1800,
           "Google Calendar non ha risposto in tempo."
         );
-        return { requestedSlot, calendarAvailable: true };
+        const slot = slimSlot(requestedSlot.slot);
+        return {
+          calendarAvailable: true,
+          requestedAvailable: Boolean(requestedSlot.available),
+          requestedLabel: slot?.label || "orario richiesto",
+          reason: requestedSlot.reason || "",
+          message: requestedSlot.available
+            ? `Lo slot ${slot?.label || "richiesto"} e disponibile. Se hai nome e telefono, crea l'appuntamento.`
+            : `Lo slot richiesto non e disponibile: ${requestedSlot.reason || "risulta occupato"}. Proponi una alternativa.`
+        };
       }
       const slots = await withTimeout(
         getAvailableSlots(args),
         1800,
         "Google Calendar non ha risposto in tempo."
       );
-      return { slots, calendarAvailable: true };
+      const alternatives = slots.slice(0, 2).map(slimSlot).filter(Boolean);
+      return {
+        calendarAvailable: true,
+        alternatives,
+        firstAvailable: alternatives[0] || null,
+        message: alternatives.length
+          ? `Prime disponibilita: ${alternatives.map((slot) => slot.label).join(", ")}. Proponile al cliente.`
+          : "Non risultano slot liberi immediati. Raccogli preferenza e fai confermare da un consulente."
+      };
     } catch (error) {
       saveLead({
         type: "calendar_unavailable",
@@ -365,9 +426,13 @@ export async function runTool(name, args, context = {}) {
       });
     }
     return {
-      appointment,
+      appointment: {
+        start: appointmentStart,
+        label: formatRomeDate(appointmentStart)
+      },
       customerWhatsappSentTo: customerWhatsappTo || null,
-      sellerNotified: true
+      sellerNotified: true,
+      message: `Appuntamento confermato per ${formatRomeDate(appointmentStart)}.`
     };
   }
 
