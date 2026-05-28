@@ -713,6 +713,20 @@ app.post("/admin/update-twilio-webhook", requireAdmin, async (req, res) => {
   }
 });
 
+app.get("/admin/update-twilio-webhook", requireAdmin, async (req, res) => {
+  try {
+    const updated = await updateTwilioWebhook(req.query.baseUrl || config.publicBaseUrl);
+    logEvent("twilio_webhook_updated", updated);
+    res.json({ ok: true, updated });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message,
+      code: error.code
+    });
+  }
+});
+
 app.post("/admin/test-call", requireAdmin, async (req, res) => {
   try {
     const call = await createTestCall(req.query.baseUrl || config.publicBaseUrl);
