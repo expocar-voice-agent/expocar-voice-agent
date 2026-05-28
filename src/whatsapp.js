@@ -160,11 +160,15 @@ export async function notifySeller({ body }) {
     const chunk = chunks.length > 1
       ? `${chunks[index]}\n\n(${index + 1}/${chunks.length})`
       : chunks[index];
-    const message = await client.messages.create({
+    const payload = {
       from: config.twilio.whatsappFrom,
       to,
       body: chunk
-    });
+    };
+    const statusCallback = messageStatusCallbackUrl();
+    if (statusCallback) payload.statusCallback = statusCallback;
+
+    const message = await client.messages.create(payload);
     sent.push(message);
     logEvent("whatsapp_seller_sent", { to, sid: message.sid, part: index + 1, total: chunks.length });
   }

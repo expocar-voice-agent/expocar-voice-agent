@@ -206,17 +206,6 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
   try {
     logEvent("tool_call_started", { name, args });
     session?.toolCalls?.push(name);
-    if (openaiWs.readyState === WebSocket.OPEN) {
-      openaiWs.send(JSON.stringify({
-        type: "response.create",
-        response: {
-          output_modalities: ["audio"],
-          instructions: name === "controlla_disponibilita" || name === "crea_appuntamento"
-            ? "Di subito e solo questa frase naturale: Non si preoccupi, controllo subito la disponibilita."
-            : "Di subito e solo questa frase naturale: Non si preoccupi, verifico subito."
-        }
-      }));
-    }
     const output = await Promise.race([
       runTool(name, args, {
         callSid: session?.callSid,
@@ -463,7 +452,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       logEvent("openai_realtime_server_error", {
         error: event.error
       });
-      if (event.error?.code === "response_cancel_not_active") {
+      if (["response_cancel_not_active", "conversation_already_has_active_response"].includes(event.error?.code)) {
+        responseInProgress = false;
         return;
       }
       alertSeller("openai_realtime_server_error", {
