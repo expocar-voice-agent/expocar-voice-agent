@@ -40,10 +40,22 @@ function appendTranscript(session, speaker, text) {
   });
 }
 
-function buildCallSummary(session) {
+function greetingForRome() {
+  const hour = Number(new Intl.DateTimeFormat("it-IT", {
+    timeZone: config.business.timezone,
+    hour: "2-digit",
+    hour12: false
+  }).format(new Date()));
+
+  if (hour < 13) return "Buongiorno";
+  if (hour < 18) return "Buon pomeriggio";
+  return "Buonasera";
+}
+
+function fallbackCallSummary(session) {
   const durationSeconds = Math.max(0, Math.round((Date.now() - session.startedAt) / 1000));
   const transcript = session.transcript
-    .slice(-12)
+    .slice(-20)
     .map((item) => `${item.speaker}: ${item.text}`)
     .join("\n");
 
@@ -54,15 +66,72 @@ function buildCallSummary(session) {
     session.callSid ? `Call SID: ${session.callSid}` : "",
     `Durata circa: ${durationSeconds} sec`,
     "",
-    transcript ? `Conversazione:\n${clipText(transcript, 1200)}` : "Conversazione: trascrizione non disponibile.",
+    transcript ? `Conversazione:\n${clipText(transcript, 1800)}` : "Conversazione: trascrizione non disponibile.",
     session.toolCalls.length ? `\nAzioni eseguite: ${session.toolCalls.join(", ")}` : ""
   ].filter((line) => line !== "").join("\n");
+}
+
+async function buildCallSummary(session) {
+  const fallback = fallbackCallSummary(session);
+  const transcript = session.transcript
+    .map((item) => `${item.speaker}: ${item.text}`)
+    .join("\n");
+
+  if (!transcript || !config.openai.apiKey) return fallback;
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.openai.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: config.openai.summaryModel,
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content: "Sei un assistente operativo per una concessionaria. Crea un riepilogo WhatsApp breve, chiaro e utile per il venditore. Scrivi in italiano."
+          },
+          {
+            role: "user",
+            content: [
+              `Numero cliente: ${session.from || "non disponibile"}`,
+              `Numero chiamato: ${session.to || "numero Expocar"}`,
+              session.callSid ? `Call SID: ${session.callSid}` : "",
+              "",
+              "Trascrizione:",
+              transcript,
+              "",
+              "Formato richiesto:",
+              "Riepilogo chiamata Expocar",
+              "Cliente/telefono",
+              "Richiesta principale",
+              "Auto/prodotto citato",
+              "Budget, permuta, finanziamento/leasing se presenti",
+              "Appuntamento o azioni richieste",
+              "Prossimo passo consigliato",
+              "Nota se mancano informazioni importanti"
+            ].filter(Boolean).join("\n")
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) return fallback;
+    const data = await response.json();
+    const summary = data.choices?.[0]?.message?.content?.trim();
+    return summary || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 async function sendFinalCallSummary(session) {
   if (session.summarySent) return;
   session.summarySent = true;
-  const body = buildCallSummary(session);
+  const body = await buildCallSummary(session);
   saveLead({
     type: "call_summary",
     callSid: session.callSid,
@@ -211,7 +280,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: "Di esattamente: Expocar, buongiorno, sono Marco. In cosa posso esserle utile?"
+        instructions: `Di esattamente: ${greetingForRome()}, Expocar Italia sono Marco. In cosa posso esserle utile?`
       }
     }));
   });
@@ -319,7 +388,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         type: "response.create",
         response: {
           output_modalities: ["audio"],
-          instructions: "Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta con voce naturale e ritmo spedito: Expocar, buongiorno, sono Marco. In cosa posso esserle utile? Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale."
+          instructions: `Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta con voce naturale e ritmo spedito: ${greetingForRome()}, Expocar Italia sono Marco. In cosa posso esserle utile? Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale.`
         }
       }));
     }, 1800);

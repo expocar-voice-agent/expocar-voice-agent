@@ -16,6 +16,19 @@ import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
 
 const app = express();
+
+function greetingForRome() {
+  const hour = Number(new Intl.DateTimeFormat("it-IT", {
+    timeZone: config.business.timezone,
+    hour: "2-digit",
+    hour12: false
+  }).format(new Date()));
+
+  if (hour < 13) return "Buongiorno";
+  if (hour < 18) return "Buon pomeriggio";
+  return "Buonasera";
+}
+
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -821,7 +834,7 @@ app.post("/twilio/voice-greeting", (req, res) => {
   response.say({
     language: "it-IT",
     voice: "Polly.Giorgio"
-  }, "Expocar, buongiorno, sono Marco. In cosa posso esserle utile?");
+  }, `${greetingForRome()}, Expocar Italia sono Marco. In cosa posso esserle utile?`);
   response.pause({ length: 1 });
   response.say({
     language: "it-IT",

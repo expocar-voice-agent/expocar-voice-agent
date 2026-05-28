@@ -23,7 +23,8 @@ export const config = {
     webhookSecret: process.env.OPENAI_WEBHOOK_SECRET || "",
     realtimeModel: process.env.OPENAI_REALTIME_MODEL || "gpt-realtime",
     voice: process.env.OPENAI_REALTIME_VOICE || "cedar",
-    speed: optionalNumber("OPENAI_REALTIME_SPEED", 1.2)
+    speed: optionalNumber("OPENAI_REALTIME_SPEED", 1.2),
+    summaryModel: process.env.OPENAI_SUMMARY_MODEL || "gpt-4o-mini"
   },
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID || "",
