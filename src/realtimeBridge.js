@@ -131,7 +131,7 @@ async function buildCallSummary(session) {
 async function sendFinalCallSummary(session) {
   if (session.summarySent) return;
   session.summarySent = true;
-  const body = await buildCallSummary(session);
+  const body = fallbackCallSummary(session);
   saveLead({
     type: "call_summary",
     callSid: session.callSid,
@@ -159,6 +159,22 @@ async function sendFinalCallSummary(session) {
       error: error.message
     });
   }
+
+  buildCallSummary(session)
+    .then(async (smartBody) => {
+      if (!smartBody || smartBody === body) return;
+      await notifySeller({ body: `Riepilogo dettagliato Expocar\n\n${smartBody}` });
+      logEvent("call_summary_smart_whatsapp_sent", {
+        callSid: session.callSid,
+        from: session.from
+      });
+    })
+    .catch((error) => {
+      logEvent("call_summary_smart_whatsapp_failed", {
+        callSid: session.callSid,
+        error: error.message
+      });
+    });
 
   try {
     const customerMessage = await sendCustomerAfterCallWhatsapp({ to: session.from });
