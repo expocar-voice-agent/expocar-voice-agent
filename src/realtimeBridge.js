@@ -237,6 +237,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let responseInProgress = false;
   let lastAssistantAudioAt = Date.now();
   let silenceTimer;
+  let openaiOpened = false;
   const session = {
     startedAt: Date.now(),
     callSid: "",
@@ -301,6 +302,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   openaiWs.on("open", () => {
+    openaiOpened = true;
     logEvent("openai_realtime_open");
     resetSilenceTimer();
     openaiWs.send(JSON.stringify({
@@ -518,8 +520,18 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       from: session.from,
       code,
       reason: reason?.toString(),
+      openaiOpened,
       lifetimeMs: Date.now() - session.startedAt
     });
-    closeTwilioSafely("openai_realtime_close");
+    if (openaiOpened) {
+      closeTwilioSafely("openai_realtime_close");
+      return;
+    }
+    alertSeller("openai_realtime_closed_before_open", {
+      message: "OpenAI Realtime non ha aperto la connessione prima della chiusura.",
+      callSid: session.callSid,
+      from: session.from,
+      details: { code, reason: reason?.toString() }
+    });
   });
 }

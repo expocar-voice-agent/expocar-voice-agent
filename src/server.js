@@ -484,6 +484,73 @@ async function testOpenAIRealtime() {
   });
 }
 
+async function testOpenAIRealtimeDetailed() {
+  return new Promise((resolve, reject) => {
+    const model = config.openai.realtimeModel;
+    const startedAt = Date.now();
+    const events = [];
+    const ws = new WebSocket(
+      `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`,
+      { headers: { Authorization: `Bearer ${config.openai.apiKey}` } }
+    );
+
+    const timer = setTimeout(() => {
+      events.push({ type: "timeout", elapsedMs: Date.now() - startedAt });
+      ws.close();
+      reject(new Error(`OpenAI realtime timeout: ${JSON.stringify(events)}`));
+    }, 12000);
+
+    ws.on("open", () => {
+      events.push({ type: "open", elapsedMs: Date.now() - startedAt });
+      ws.send(JSON.stringify({
+        type: "session.update",
+        session: {
+          type: "realtime",
+          model,
+          output_modalities: ["audio"],
+          audio: {
+            input: { format: { type: "audio/pcmu" } },
+            output: { format: { type: "audio/pcmu" }, voice: config.openai.voice }
+          }
+        }
+      }));
+    });
+
+    ws.on("message", (raw) => {
+      let event;
+      try {
+        event = JSON.parse(raw.toString());
+      } catch {
+        event = { type: "unparseable" };
+      }
+
+      events.push({
+        type: event.type,
+        error: event.error,
+        elapsedMs: Date.now() - startedAt
+      });
+
+      if (event.type === "session.created" || event.type === "session.updated") {
+        clearTimeout(timer);
+        ws.close();
+        resolve({ ok: true, model, voice: config.openai.voice, events });
+      }
+
+      if (event.type === "error") {
+        clearTimeout(timer);
+        ws.close();
+        reject(new Error(`OpenAI realtime error: ${JSON.stringify(event.error)}`));
+      }
+    });
+
+    ws.on("error", (error) => {
+      clearTimeout(timer);
+      events.push({ type: "error", message: error.message, elapsedMs: Date.now() - startedAt });
+      reject(error);
+    });
+  });
+}
+
 async function testTwilioApi() {
   if (!config.twilio.accountSid || !config.twilio.authToken || !config.twilio.fromNumber) {
     return "Twilio non configurato, test saltato";
@@ -670,6 +737,19 @@ app.get("/admin/self-test", requireAdmin, async (_req, res) => {
     ready: results.every((result) => result.ok),
     results
   });
+});
+
+app.get("/admin/openai-realtime-check", requireAdmin, async (_req, res) => {
+  try {
+    const result = await testOpenAIRealtimeDetailed();
+    res.json(result);
+  } catch (error) {
+    logEvent("openai_realtime_check_failed", { error: error.message });
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
 });
 
 app.get("/admin/twilio-available-numbers", requireAdmin, async (req, res) => {
