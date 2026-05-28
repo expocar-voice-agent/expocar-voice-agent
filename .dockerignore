@@ -1,0 +1,11 @@
+node_modules
+.env
+data
+cloudflared*.log
+npm-debug.log*
+.git
+*.zip
+*.log
+.env.production.values
+RUN_*.bat
+WAIT_*.bat
