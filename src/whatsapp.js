@@ -148,11 +148,26 @@ export async function notifySeller({ body }) {
     return { skipped: true };
   }
 
-  const message = await client.messages.create({
-    from: config.twilio.whatsappFrom,
-    to,
-    body
-  });
-  logEvent("whatsapp_seller_sent", { to, sid: message.sid });
-  return message;
+  const text = String(body || "").trim() || "Notifica Expocar";
+  const maxLength = 1300;
+  const chunks = [];
+  for (let index = 0; index < text.length; index += maxLength) {
+    chunks.push(text.slice(index, index + maxLength));
+  }
+
+  const sent = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks.length > 1
+      ? `${chunks[index]}\n\n(${index + 1}/${chunks.length})`
+      : chunks[index];
+    const message = await client.messages.create({
+      from: config.twilio.whatsappFrom,
+      to,
+      body: chunk
+    });
+    sent.push(message);
+    logEvent("whatsapp_seller_sent", { to, sid: message.sid, part: index + 1, total: chunks.length });
+  }
+
+  return sent[0] || { skipped: true };
 }

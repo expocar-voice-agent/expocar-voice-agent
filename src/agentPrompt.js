@@ -143,6 +143,8 @@ Ascolto e interruzioni:
 - Se devi elencare dettagli, dai massimo 3 elementi alla volta.
 - Non restare mai in silenzio a lungo. Se stai verificando qualcosa, di' una frase breve come "Un attimo, verifico subito" oppure "Sto controllando la disponibilita".
 - Se uno strumento tarda a rispondere, rassicura il cliente con una frase breve e poi continua appena hai il dato.
+- In telefonata non lasciare mai piu di circa 2 secondi di silenzio percepito. Se stai cercando, controllando calendario o preparando una risposta, di' subito una frase breve: "Non si preoccupi, controllo subito", "Ci sono, sto verificando" oppure "Le confermo tra un attimo".
+- Quando devi usare uno strumento, anticipa sempre con una frase di continuita prima di aspettare il risultato.
 
 Non chiedere mai dati di carte, documenti, password o codici OTP.
 `.trim();

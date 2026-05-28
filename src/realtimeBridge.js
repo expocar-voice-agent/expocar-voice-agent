@@ -66,7 +66,7 @@ function fallbackCallSummary(session) {
     session.callSid ? `Call SID: ${session.callSid}` : "",
     `Durata circa: ${durationSeconds} sec`,
     "",
-    transcript ? `Conversazione:\n${clipText(transcript, 1800)}` : "Conversazione: trascrizione non disponibile.",
+    transcript ? `Conversazione:\n${clipText(transcript, 1100)}` : "Conversazione: trascrizione non disponibile.",
     session.toolCalls.length ? `\nAzioni eseguite: ${session.toolCalls.join(", ")}` : ""
   ].filter((line) => line !== "").join("\n");
 }
@@ -206,6 +206,17 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
   try {
     logEvent("tool_call_started", { name, args });
     session?.toolCalls?.push(name);
+    if (openaiWs.readyState === WebSocket.OPEN) {
+      openaiWs.send(JSON.stringify({
+        type: "response.create",
+        response: {
+          output_modalities: ["audio"],
+          instructions: name === "controlla_disponibilita" || name === "crea_appuntamento"
+            ? "Di subito e solo questa frase naturale: Non si preoccupi, controllo subito la disponibilita."
+            : "Di subito e solo questa frase naturale: Non si preoccupi, verifico subito."
+        }
+      }));
+    }
     const output = await Promise.race([
       runTool(name, args, {
         callSid: session?.callSid,
@@ -213,7 +224,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
         to: session?.to
       }),
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 12000);
+        setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 5000);
       })
     ]);
     logEvent("tool_call_done", { name });
@@ -247,7 +258,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
     type: "response.create",
     response: {
       output_modalities: ["audio"],
-      instructions: "Rispondi subito al cliente in modo breve. Se lo strumento ha dato errore o e lento, non restare in silenzio: raccogli nome, telefono e preferenza, poi avvisa che un consulente confermera."
+      instructions: "Rispondi subito in una frase breve. Se calendario o strumenti sono lenti, non restare in silenzio: di' che prendi nota tu, raccogli nome, telefono e orario preferito, e avvisa che un consulente confermera."
     }
   }));
 }
@@ -360,12 +371,15 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
       const idleMs = Date.now() - lastAssistantAudioAt;
-      if (idleMs < 4500 || openaiWs.readyState !== WebSocket.OPEN) return;
+      if (idleMs < 2200 || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
+        resetSilenceTimer();
+        return;
+      }
       logEvent("anti_silence_prompt", { callSid: session.callSid, idleMs });
-      sendQuickAudio("Di una frase molto breve e naturale per evitare silenzio: Un attimo, verifico subito.");
+      sendQuickAudio("Di una frase brevissima e naturale per evitare silenzio: Ci sono, sto verificando.");
       lastAssistantAudioAt = Date.now();
       resetSilenceTimer();
-    }, 4500);
+    }, 2200);
   }
 
   openaiWs.on("open", () => {
