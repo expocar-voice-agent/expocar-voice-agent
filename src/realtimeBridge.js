@@ -239,6 +239,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let lastAssistantAudioAt = Date.now();
   let silenceTimer;
   let openaiOpened = false;
+  let twilioMessageCount = 0;
   const pendingAudio = [];
   const session = {
     startedAt: Date.now(),
@@ -450,7 +451,16 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   twilioWs.on("message", (raw) => {
+    twilioMessageCount += 1;
     const message = safeJsonParse(raw);
+    if (twilioMessageCount <= 3) {
+      logEvent("twilio_media_message", {
+        count: twilioMessageCount,
+        event: message.event,
+        size: raw?.length || raw?.byteLength || 0,
+        preview: String(raw).slice(0, 220)
+      });
+    }
 
     if (message.event === "start") {
       streamSid = message.start?.streamSid;
@@ -491,6 +501,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       from: session.from,
       code,
       reason: reason?.toString(),
+      messageCount: twilioMessageCount,
       lifetimeMs: Date.now() - session.startedAt
     });
     sendFinalCallSummary(session);

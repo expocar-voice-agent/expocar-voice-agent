@@ -1160,9 +1160,7 @@ app.post("/twilio/voice", (req, res) => {
   const wsProtocol = proto === "https" ? "wss" : "ws";
   const wsUrl = `${wsProtocol}://${req.get("host")}`;
   const stream = connect.stream({
-    url: `${wsUrl}/twilio/media`,
-    statusCallback: `${httpBaseUrl}/twilio/stream-status`,
-    statusCallbackMethod: "POST"
+    url: `${wsUrl}/twilio/media`
   });
   stream.parameter({ name: "callSid", value: req.body?.CallSid || "" });
   stream.parameter({ name: "from", value: req.body?.From || "" });
