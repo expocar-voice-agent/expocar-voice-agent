@@ -21,6 +21,37 @@ function clipText(value, maxLength = 1200) {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+function normalizeLeadText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function updateLeadFacts(session, speaker, text) {
+  if (speaker !== "Cliente") return;
+  const clean = clipText(text, 220);
+  if (!clean || clean.length < 4) return;
+
+  const normalized = normalizeLeadText(clean);
+  const looksForeign = /[a-z]{4,}\s+[a-z]{4,}\s+[a-z]{4,}/i.test(clean) && !/[àèéìòù]/i.test(clean);
+  if (looksForeign) return;
+
+  const mentionsAppointment = /\b(appuntamento|domani|oggi|lunedi|martedi|mercoledi|giovedi|venerdi|sabato|domenica|alle\s+\d{1,2}|consulente)\b/.test(normalized);
+  const mentionsImport = /\b(import|estero|germania|europa|ordinare|cercare|ricerca|su misura)\b/.test(normalized);
+  const mentionsBudget = /\b(budget|euro|prezzo|finanziamento|leasing|permuta|sconto)\b/.test(normalized) || /\d{2,3}\.?\d{3}/.test(normalized);
+  const mentionsVehicle = /\b(auto|macchina|vettura|audi|bmw|mercedes|porsche|range|smart|x5|q3|benzina|diesel|ibrida|elettrica|suv)\b/.test(normalized);
+  const mentionsSeaNext = /\b(sea\s*next|seanxt|scooter|subacque)\b/.test(normalized);
+
+  if (mentionsAppointment) session.leadFacts.appointment = clean;
+  if (mentionsImport) session.leadFacts.importRequest = clean;
+  if (mentionsBudget) session.leadFacts.budget = clean;
+  if (mentionsVehicle || mentionsSeaNext) session.leadFacts.interest = clean;
+  if (!session.leadFacts.request && (mentionsAppointment || mentionsImport || mentionsBudget || mentionsVehicle || mentionsSeaNext)) {
+    session.leadFacts.request = clean;
+  }
+}
+
 function extractTranscript(event) {
   return event.transcript
     || event.item?.transcript
@@ -33,6 +64,7 @@ function appendTranscript(session, speaker, text) {
   const clean = clipText(text, 500);
   if (!clean) return;
   session.transcript.push({ speaker, text: clean });
+  updateLeadFacts(session, speaker, clean);
   logEvent("call_transcript_piece", {
     callSid: session.callSid,
     speaker,
@@ -54,25 +86,28 @@ function greetingForRome() {
 
 function buildLeadWhatsapp(session) {
   const durationSeconds = Math.max(0, Math.round((Date.now() - session.startedAt) / 1000));
-  const customerText = session.transcript
-    .filter((item) => item.speaker === "Cliente")
-    .map((item) => item.text)
-    .join(" ");
-  const recentConversation = session.transcript
-    .slice(-8)
-    .map((item) => `${item.speaker}: ${item.text}`)
-    .join("\n");
 
   return [
-    "Lead telefonico ExpoCar",
+    "Lead ExpoCar",
     `Cliente: ${session.from || "numero non disponibile"}`,
     session.callSid ? `Call SID: ${session.callSid}` : "",
     `Durata circa: ${durationSeconds} sec`,
-    session.toolCalls.length ? `Azioni: ${session.toolCalls.join(", ")}` : "",
+    session.leadFacts.request ? `Richiesta: ${session.leadFacts.request}` : "",
+    session.leadFacts.interest ? `Interesse: ${session.leadFacts.interest}` : "",
+    session.leadFacts.budget ? `Budget/prezzo: ${session.leadFacts.budget}` : "",
+    session.leadFacts.appointment ? `Appuntamento: ${session.leadFacts.appointment}` : "",
+    session.leadFacts.importRequest ? `Importazione: ${session.leadFacts.importRequest}` : "",
     "",
-    customerText ? `Informazioni cliente:\n${clipText(customerText, 900)}` : "Informazioni cliente: non rilevate in trascrizione.",
-    recentConversation ? `\nUltimi scambi:\n${clipText(recentConversation, 900)}` : ""
+    "Per il contenuto preciso della conversazione usa la registrazione chiamata."
   ].filter((line) => line !== "").join("\n");
+}
+
+function hasOperationalLead(session) {
+  return session.toolCalls.some((name) => [
+    "avvisa_venditore",
+    "registra_richiesta_importazione",
+    "crea_appuntamento"
+  ].includes(name));
 }
 
 async function sendFinalCallSummary(session) {
@@ -88,12 +123,20 @@ async function sendFinalCallSummary(session) {
   });
 
   try {
-    const body = buildLeadWhatsapp(session);
-    await notifySeller({ body });
-    logEvent("call_lead_whatsapp_sent", {
-      callSid: session.callSid,
-      from: session.from
-    });
+    if (hasOperationalLead(session)) {
+      logEvent("call_lead_whatsapp_skipped", {
+        callSid: session.callSid,
+        from: session.from,
+        reason: "operational_lead_already_sent"
+      });
+    } else {
+      const body = buildLeadWhatsapp(session);
+      await notifySeller({ body });
+      logEvent("call_lead_whatsapp_sent", {
+        callSid: session.callSid,
+        from: session.from
+      });
+    }
   } catch (error) {
     saveLead({
       type: "call_lead_whatsapp_failed",
@@ -267,6 +310,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     to: "",
     transcript: [],
     toolCalls: [],
+    leadFacts: {},
     summarySent: false
   };
 
@@ -322,7 +366,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
             format: { type: "audio/pcmu" },
             transcription: {
               model: "gpt-4o-mini-transcribe",
-              language: "it"
+              language: "it",
+              prompt: "Trascrivi solo parole realmente pronunciate in italiano. Ignora rumori di fondo, brusii, musica, voci lontane e parole non chiare. Non inventare frasi."
             },
             turn_detection: {
               type: "server_vad",
