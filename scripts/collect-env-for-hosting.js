@@ -1,0 +1,35 @@
+import "dotenv/config";
+
+const keys = [
+  "OPENAI_API_KEY",
+  "OPENAI_PROJECT_ID",
+  "ADMIN_TOKEN",
+  "OPENAI_REALTIME_MODEL",
+  "OPENAI_REALTIME_VOICE",
+  "BUSINESS_PUBLIC_PHONE",
+  "DIDWW_API_KEY",
+  "DIDWW_DID_NUMBER",
+  "MULTIGESTIONALE_USER_API",
+  "MULTIGESTIONALE_ENGINE",
+  "GOOGLE_CALENDAR_ID",
+  "GOOGLE_AUTH_MODE",
+  "GOOGLE_OAUTH_CLIENT_ID",
+  "GOOGLE_OAUTH_CLIENT_SECRET",
+  "GOOGLE_OAUTH_REFRESH_TOKEN",
+  "BUSINESS_TIMEZONE",
+  "BUSINESS_OPEN_HOUR",
+  "BUSINESS_CLOSE_HOUR",
+  "APPOINTMENT_DURATION_MINUTES",
+  "APPOINTMENT_MIN_NOTICE_HOURS",
+  "APPOINTMENT_SLOT_MINUTES",
+  "LOCATION_URL"
+];
+
+const envVars = keys
+  .filter((key) => process.env[key])
+  .map((key) => ({
+    key,
+    value: process.env[key]
+  }));
+
+console.log(JSON.stringify(envVars, null, 2));

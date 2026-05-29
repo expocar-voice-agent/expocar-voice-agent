@@ -1,0 +1,46 @@
+import "dotenv/config";
+import fs from "node:fs";
+
+const keys = [
+  "OPENAI_API_KEY",
+  "OPENAI_PROJECT_ID",
+  "OPENAI_WEBHOOK_SECRET",
+  "ADMIN_TOKEN",
+  "PUBLIC_BASE_URL",
+  "OPENAI_REALTIME_MODEL",
+  "OPENAI_REALTIME_VOICE",
+  "OPENAI_REALTIME_SPEED",
+  "TWILIO_ACCOUNT_SID",
+  "TWILIO_AUTH_TOKEN",
+  "TWILIO_FROM_NUMBER",
+  "TWILIO_WHATSAPP_FROM",
+  "TWILIO_MESSAGING_SERVICE_SID",
+  "TWILIO_CUSTOMER_TEMPLATE_CONTENT_SID",
+  "TWILIO_APPOINTMENT_TEMPLATE_CONTENT_SID",
+  "SELLER_WHATSAPP_TO",
+  "HUMAN_TRANSFER_PHONE",
+  "BUSINESS_PUBLIC_PHONE",
+  "DIDWW_API_KEY",
+  "DIDWW_DID_NUMBER",
+  "MULTIGESTIONALE_USER_API",
+  "MULTIGESTIONALE_ENGINE",
+  "GOOGLE_CALENDAR_ID",
+  "GOOGLE_AUTH_MODE",
+  "GOOGLE_OAUTH_CLIENT_ID",
+  "GOOGLE_OAUTH_CLIENT_SECRET",
+  "GOOGLE_OAUTH_REFRESH_TOKEN",
+  "BUSINESS_TIMEZONE",
+  "BUSINESS_OPEN_HOUR",
+  "BUSINESS_CLOSE_HOUR",
+  "APPOINTMENT_DURATION_MINUTES",
+  "APPOINTMENT_MIN_NOTICE_HOURS",
+  "APPOINTMENT_SLOT_MINUTES",
+  "LOCATION_URL"
+];
+
+const lines = keys
+  .filter((key) => process.env[key])
+  .map((key) => `${key}=${process.env[key]}`);
+
+fs.writeFileSync(".env.production.values", `${lines.join("\n")}\n`);
+console.log(`Scritte ${lines.length} variabili in .env.production.values`);
