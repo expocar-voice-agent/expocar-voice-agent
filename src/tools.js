@@ -331,7 +331,7 @@ export async function runTool(name, args, context = {}) {
       return {
         slots: [],
         calendarAvailable: false,
-        message: "Calendario momentaneamente lento. Non restare in silenzio: raccogli nome, telefono, giorno e ora preferiti; spiega che un consulente confermera subito l'appuntamento."
+        message: "Calendario momentaneamente lento. Raccogli nome, telefono, giorno e ora preferiti; spiega in modo naturale che lo fai verificare in sede."
       };
     }
   }
@@ -375,7 +375,7 @@ export async function runTool(name, args, context = {}) {
         appointment: null,
         pendingConfirmation: true,
         customerWhatsappSentTo: customerWhatsappTo || null,
-        message: "Calendario momentaneamente lento. Non confermare come definitivo: rassicura il cliente, prendi nota e di' che un consulente confermera l'appuntamento a breve."
+        message: "Calendario momentaneamente lento. Non confermare come definitivo: prendi nota e di' che lo fai verificare in sede."
       };
     }
     const appointmentStart = appointment.start || args.startTime;

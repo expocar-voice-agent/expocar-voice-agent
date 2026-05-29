@@ -221,7 +221,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
     type: "response.create",
     response: {
       output_modalities: ["audio"],
-      instructions: "Rispondi subito in una frase breve. Se calendario o strumenti sono lenti, non restare in silenzio: di' che prendi nota tu, raccogli nome, telefono e orario preferito, e avvisa che un consulente confermera."
+      instructions: "Rispondi subito in modo naturale, con una frase breve. Se calendario o strumenti sono lenti, non restare in silenzio: raccogli nome, telefono e orario preferito, e di' che lo fai verificare in sede."
     }
   }));
 }
@@ -343,8 +343,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
       logEvent("anti_silence_prompt", { callSid: session.callSid, idleMs });
       sendQuickAudio(waitingForCustomer
-        ? "Il cliente e rimasto in silenzio. Di in modo naturale: E ancora in linea? Mi dica pure, sono qui."
-        : "Di una frase brevissima e naturale per evitare silenzio: Ci sono, sto verificando.");
+        ? "Il cliente e rimasto in silenzio. Di una frase naturale e breve, non robotica: E ancora in linea? oppure Mi sente?"
+        : "Di una frase brevissima e naturale, variando le parole: Aspetti, guardo un attimo, oppure Le controllo subito.");
       lastAssistantAudioAt = Date.now();
       waitingForCustomer = true;
       resetSilenceTimer();
@@ -394,7 +394,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         type: "response.create",
         response: {
           output_modalities: ["audio"],
-          instructions: `Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta con voce naturale e ritmo spedito: ${greetingForRome()}, Expocar Italia sono Marco. In cosa posso esserle utile? Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale.`
+          instructions: `Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta in modo naturale, come una persona al telefono: ${greetingForRome()}, Expocar Italia sono Marco. Mi dica pure. Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale.`
         }
       }));
     }, 1800);
