@@ -119,10 +119,6 @@ async function transferActiveCall({ callSid, from, reason }) {
   }
 
   const response = new twilio.twiml.VoiceResponse();
-  response.say({
-    language: "it-IT",
-    voice: "Polly.Giorgio"
-  }, "La metto subito in contatto con un consulente Expocar. Se la linea dovesse cadere, puo chiamare o scrivere su WhatsApp al numero 371 193 8885.");
   response.dial({
     callerId: config.twilio.fromNumber || undefined,
     timeout: 25
