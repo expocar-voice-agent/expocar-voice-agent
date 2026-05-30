@@ -37,6 +37,10 @@ export const config = {
     customerTemplateContentSid: process.env.TWILIO_CUSTOMER_TEMPLATE_CONTENT_SID || "",
     appointmentTemplateContentSid: process.env.TWILIO_APPOINTMENT_TEMPLATE_CONTENT_SID || ""
   },
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || "",
+    chatId: process.env.TELEGRAM_CHAT_ID || ""
+  },
   multigestionale: {
     userApi: required("MULTIGESTIONALE_USER_API"),
     engine: process.env.MULTIGESTIONALE_ENGINE || "car"

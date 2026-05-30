@@ -14,6 +14,7 @@ import { readRecentLeads } from "./leads.js";
 import { notifySeller, sendAppointmentWhatsapp, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
+import { getTelegramUpdates, notifySellerTelegram } from "./telegram.js";
 
 const app = express();
 const recordingCalls = new Map();
@@ -292,6 +293,36 @@ app.get("/admin/test-alert", requireAdmin, async (req, res) => {
     throttled: Boolean(result.throttled),
     sid: result.sid || null
   });
+});
+
+app.get("/admin/test-telegram", requireAdmin, async (_req, res) => {
+  try {
+    const message = await notifySellerTelegram({
+      body: `Test Telegram ExpoCar: notifiche attive ${new Date().toISOString()}`
+    });
+    res.json({
+      ok: !message.skipped,
+      skipped: Boolean(message.skipped),
+      messageId: message.message_id || null
+    });
+  } catch (error) {
+    logEvent("admin_test_telegram_failed", { error: error.message });
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/admin/telegram-updates", requireAdmin, async (_req, res) => {
+  try {
+    const result = await getTelegramUpdates();
+    res.json({
+      ok: !result.skipped,
+      skipped: Boolean(result.skipped),
+      updates: result.updates
+    });
+  } catch (error) {
+    logEvent("admin_telegram_updates_failed", { error: error.message });
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 async function runCheck(name, fn) {

@@ -1,6 +1,7 @@
 import twilio from "twilio";
 import { config } from "./config.js";
 import { logEvent } from "./logger.js";
+import { notifySellerTelegram } from "./telegram.js";
 
 function getClient() {
   if (!config.twilio.accountSid || !config.twilio.authToken) return null;
@@ -137,6 +138,13 @@ https://expocaritalia.simplybook.it/v2/#book/service/2`;
 }
 
 export async function notifySeller({ body }) {
+  let telegramResult = { skipped: true };
+  try {
+    telegramResult = await notifySellerTelegram({ body });
+  } catch (error) {
+    logEvent("telegram_seller_notify_failed", { error: error.message });
+  }
+
   const client = getClient();
   const to = normalizeWhatsappNumber(config.twilio.sellerWhatsappTo);
   if (!client || !config.twilio.whatsappFrom || !to) {
@@ -145,7 +153,7 @@ export async function notifySeller({ body }) {
       hasFrom: Boolean(config.twilio.whatsappFrom),
       hasTo: Boolean(to)
     });
-    return { skipped: true };
+    return telegramResult.skipped ? { skipped: true } : telegramResult;
   }
 
   const text = String(body || "").trim() || "Notifica Expocar";
