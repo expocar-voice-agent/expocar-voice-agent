@@ -138,34 +138,15 @@ https://expocaritalia.simplybook.it/v2/#book/service/2`;
 }
 
 export async function notifySeller({ body }) {
-  let telegramResult = { skipped: true };
   try {
-    telegramResult = await notifySellerTelegram({ body });
+    const telegramResult = await notifySellerTelegram({ body });
+    if (!telegramResult.skipped) return telegramResult;
   } catch (error) {
     logEvent("telegram_seller_notify_failed", { error: error.message });
   }
 
-  const client = getClient();
-  const to = normalizeWhatsappNumber(config.twilio.sellerWhatsappTo);
-  if (!client || !config.twilio.whatsappFrom || !to) {
-    logEvent("whatsapp_seller_skipped", {
-      hasClient: Boolean(client),
-      hasFrom: Boolean(config.twilio.whatsappFrom),
-      hasTo: Boolean(to)
-    });
-    return telegramResult.skipped ? { skipped: true } : telegramResult;
-  }
-
-  const text = String(body || "").trim() || "Notifica Expocar";
-  const payload = {
-    from: config.twilio.whatsappFrom,
-    to,
-    body: text
-  };
-  const statusCallback = messageStatusCallbackUrl();
-  if (statusCallback) payload.statusCallback = statusCallback;
-
-  const message = await client.messages.create(payload);
-  logEvent("whatsapp_seller_sent", { to, sid: message.sid });
-  return message;
+  logEvent("seller_notify_skipped", {
+    telegramConfigured: Boolean(config.telegram.botToken && config.telegram.chatId)
+  });
+  return { skipped: true };
 }
