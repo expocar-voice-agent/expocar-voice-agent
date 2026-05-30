@@ -106,7 +106,8 @@ function hasOperationalLead(session) {
   return session.toolCalls.some((name) => [
     "avvisa_venditore",
     "registra_richiesta_importazione",
-    "crea_appuntamento"
+    "crea_appuntamento",
+    "trasferisci_chiamata"
   ].includes(name));
 }
 

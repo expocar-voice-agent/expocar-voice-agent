@@ -96,10 +96,20 @@ function hasInventoryFilters(args = {}) {
   );
 }
 
-async function transferActiveCall({ callSid, reason }) {
+async function transferActiveCall({ callSid, from, reason }) {
   const client = getTwilioClient();
   const to = normalizePhone(config.twilio.humanTransferTo);
   if (!client || !callSid || !to) {
+    notifySeller({
+      body: [
+        "Lead ExpoCar",
+        `Cliente: ${from || "numero non disponibile"}`,
+        "Richiesta: parlare con un consulente",
+        "Trasferimento: non disponibile, comunicare numero diretto",
+        reason ? `Motivo: ${reason}` : "",
+        callSid ? `Call SID: ${callSid}` : ""
+      ].filter(Boolean).join("\n")
+    }).catch(() => {});
     return {
       ok: false,
       transferred: false,
@@ -122,9 +132,30 @@ async function transferActiveCall({ callSid, reason }) {
   saveLead({
     type: "call_transfer",
     callSid,
+    from,
     to,
     reason
   });
+  try {
+    await notifySeller({
+      body: [
+        "Lead ExpoCar",
+        `Cliente: ${from || "numero non disponibile"}`,
+        "Richiesta: parlare con un consulente",
+        reason ? `Motivo: ${reason}` : "",
+        `Trasferimento: avviato verso ${to}`,
+        callSid ? `Call SID: ${callSid}` : "",
+        "La registrazione, se disponibile, arrivera in un messaggio separato."
+      ].filter(Boolean).join("\n")
+    });
+  } catch (error) {
+    saveLead({
+      type: "transfer_whatsapp_failed",
+      callSid,
+      from,
+      error: error.message
+    });
+  }
   return {
     ok: true,
     transferred: true,
@@ -458,6 +489,7 @@ export async function runTool(name, args, context = {}) {
   if (name === "trasferisci_chiamata") {
     return transferActiveCall({
       callSid: context.callSid,
+      from: context.from,
       reason: args.reason
     });
   }
