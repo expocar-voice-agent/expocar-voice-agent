@@ -107,6 +107,30 @@ function greetingForRome() {
   return "Buonasera";
 }
 
+function decodeMuLawSample(byte) {
+  const value = ~byte & 0xff;
+  const sign = value & 0x80 ? -1 : 1;
+  const exponent = (value >> 4) & 0x07;
+  const mantissa = value & 0x0f;
+  return sign * ((((mantissa << 3) + 0x84) << exponent) - 0x84);
+}
+
+function payloadHasVoice(payload) {
+  if (!payload) return false;
+  const audio = Buffer.from(payload, "base64");
+  if (audio.length < 80) return false;
+
+  let sum = 0;
+  const step = Math.max(1, Math.floor(audio.length / 80));
+  let count = 0;
+  for (let index = 0; index < audio.length; index += step) {
+    sum += Math.abs(decodeMuLawSample(audio[index]));
+    count += 1;
+  }
+
+  return count > 0 && sum / count > 900;
+}
+
 function formatRomeDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -379,6 +403,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let initialGreetingTimer;
   let initialGreetingBlockedUntil = 0;
   let initialCustomerAudioHeard = false;
+  let initialGreetingCompletedAt = 0;
   let assistantTextBuffer = "";
   const useElevenLabs = elevenLabsConfigured();
   const session = {
@@ -562,6 +587,17 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
 
     if (message.event === "media" && openaiWs.readyState === WebSocket.OPEN) {
+      if (
+        initialGreetingDone
+        && !initialGreetingRepeated
+        && !initialCustomerAudioHeard
+        && Date.now() - initialGreetingCompletedAt < 7000
+        && payloadHasVoice(message.media?.payload)
+      ) {
+        initialCustomerAudioHeard = true;
+        clearTimeout(initialGreetingTimer);
+        logEvent("initial_greeting_repeat_cancelled_by_audio", { callSid: session.callSid });
+      }
       resetSilenceTimer();
       openaiWs.send(JSON.stringify({
         type: "input_audio_buffer.append",
@@ -712,6 +748,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       if (initialGreetingInProgress) {
         initialGreetingInProgress = false;
         initialGreetingDone = true;
+        initialGreetingCompletedAt = Date.now();
         scheduleInitialGreetingRepeat();
       }
       waitingForCustomer = true;
