@@ -50,6 +50,17 @@ function extractName(text) {
   return /giusy|marco|expocar|buongiorno|pomeriggio|buonasera/i.test(name) ? "" : name;
 }
 
+function normalizeCallerPhone(value) {
+  let phone = String(value || "").trim().replace(/^whatsapp:/i, "").replace(/[^\d+]/g, "");
+  if (!phone) return "";
+  if (phone.startsWith("00")) phone = `+${phone.slice(2)}`;
+  if (phone.startsWith("+39")) return phone;
+  if (phone.startsWith("39") && phone.length >= 12) return `+${phone}`;
+  const digits = phone.replace(/\D/g, "");
+  if (/^3\d{8,10}$/.test(digits) || /^0\d{6,11}$/.test(digits)) return `+39${digits}`;
+  return phone.startsWith("+") ? phone : digits ? `+${digits}` : "";
+}
+
 function updateLeadFacts(session, speaker, text) {
   if (speaker !== "Cliente") return;
   const clean = clipText(text, 220);
@@ -180,7 +191,7 @@ function buildLeadWhatsapp(session) {
 
   return [
     "Lead ExpoCar",
-    `Telefono cliente: ${facts.phone || session.from || "numero non disponibile"}`,
+    `Telefono cliente: ${facts.phone || normalizeCallerPhone(session.from) || session.from || "numero non disponibile"}`,
     facts.name ? `Nome: ${facts.name}` : "",
     facts.email ? `Email: ${facts.email}` : "",
     session.callSid ? `Call SID: ${session.callSid}` : "",

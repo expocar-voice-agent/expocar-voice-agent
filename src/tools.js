@@ -244,10 +244,10 @@ export const realtimeTools = [
     description: "Crea appuntamento su SimplyBook.",
     parameters: {
       type: "object",
-      required: ["name", "phone", "interest", "startTime", "emailAsked"],
+      required: ["name", "interest", "startTime", "emailAsked"],
       properties: {
         name: { type: "string" },
-        phone: { type: "string" },
+        phone: { type: "string", description: "Telefono cliente se comunicato. Se non comunicato, il sistema usa il numero chiamante." },
         whatsappTo: { type: "string", description: "Numero WhatsApp cliente in formato whatsapp:+39..." },
         email: { type: "string", description: "Email cliente se disponibile; se il cliente non vuole darla lascia vuoto." },
         emailAsked: { type: "boolean", description: "True solo se Giusy ha chiesto esplicitamente l'email al cliente." },
@@ -313,6 +313,7 @@ export const realtimeTools = [
 ];
 
 export async function runTool(name, args, context = {}) {
+  const callerPhone = normalizePhone(context.from);
   if (name === "cerca_auto") {
     const inventory = await searchInventoryDetailed(args);
     if (!hasInventoryFilters(args)) {
@@ -428,14 +429,14 @@ export async function runTool(name, args, context = {}) {
       appointment = await withTimeout(
         createSimplyBookBooking({
           ...args,
-          phone: args.phone || context.from,
+          phone: args.phone || callerPhone || context.from,
           callSid: context.callSid
         }),
         2800,
         "SimplyBook non ha creato l'appuntamento in tempo."
       );
     } catch (error) {
-      const customerPhone = args.phone || context.from;
+      const customerPhone = args.phone || callerPhone || context.from;
       saveLead({
         type: "appointment_pending_confirmation",
         name: args.name,
@@ -466,7 +467,7 @@ export async function runTool(name, args, context = {}) {
       };
     }
     const appointmentStart = appointment.start || args.startTime;
-    const customerPhone = args.phone || context.from;
+    const customerPhone = args.phone || callerPhone || context.from;
     saveLead({
       type: "appointment",
       name: args.name,
