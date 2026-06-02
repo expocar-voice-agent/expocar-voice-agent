@@ -22,6 +22,10 @@ function clipText(value, maxLength = 1200) {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function normalizeLeadText(value) {
   return String(value || "")
     .normalize("NFD")
@@ -439,13 +443,19 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (!useElevenLabs || !streamSid || !text.trim()) return false;
     try {
       const result = await streamElevenLabsUlaw(text, async (audio) => {
-        if (twilioWs.readyState !== WebSocket.OPEN) return;
-        lastAssistantAudioAt = Date.now();
-        twilioWs.send(JSON.stringify({
-          event: "media",
-          streamSid,
-          media: { payload: audio.toString("base64") }
-        }));
+        const frameBytes = Math.max(80, config.elevenlabs.frameBytes || 160);
+        const frameDelayMs = Math.max(0, config.elevenlabs.frameDelayMs || 0);
+        for (let offset = 0; offset < audio.length; offset += frameBytes) {
+          if (twilioWs.readyState !== WebSocket.OPEN) return;
+          const frame = audio.subarray(offset, offset + frameBytes);
+          lastAssistantAudioAt = Date.now();
+          twilioWs.send(JSON.stringify({
+            event: "media",
+            streamSid,
+            media: { payload: frame.toString("base64") }
+          }));
+          if (frameDelayMs) await sleep(frameDelayMs);
+        }
       });
       if (result.skipped) return false;
       return true;

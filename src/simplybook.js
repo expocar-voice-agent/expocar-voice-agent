@@ -88,6 +88,19 @@ function normalizeEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
 }
 
+function normalizeItalianPhone(value) {
+  let phone = String(value || "").trim().replace(/^whatsapp:/i, "").replace(/[^\d+]/g, "");
+  if (!phone) return "";
+  if (phone.startsWith("00")) phone = `+${phone.slice(2)}`;
+  if (phone.startsWith("+39")) return phone;
+  if (phone.startsWith("39") && phone.length >= 12) return `+${phone}`;
+  if (phone.startsWith("+") && phone.length > 10) return phone;
+  const digits = phone.replace(/\D/g, "");
+  if (/^3\d{8,10}$/.test(digits)) return `+39${digits}`;
+  if (/^0\d{6,11}$/.test(digits)) return `+39${digits}`;
+  return phone.startsWith("+") ? phone : `+39${digits}`;
+}
+
 function appointmentParts(args = {}) {
   if (args.localDate && args.localTime) {
     return {
@@ -359,7 +372,7 @@ export async function createSimplyBookBooking(args = {}) {
   const unitId = await resolveUnitId(eventId, date, time);
   const clientData = {
     name: args.name || "Cliente Expocar",
-    phone: args.phone || "",
+    phone: normalizeItalianPhone(args.phone),
     email: normalizeEmail(args.email) || normalizeEmail(config.simplybook.defaultClientEmail) || "expocaritalia@gmail.com"
   };
   const additional = {
