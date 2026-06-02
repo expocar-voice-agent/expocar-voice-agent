@@ -509,14 +509,18 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (event.type === "input_audio_buffer.speech_started") {
       logEvent("openai_speech_started", { responseInProgress });
       waitingForCustomer = false;
+      initialCustomerAudioHeard = true;
+      if (initialGreetingDone) {
+        clearTimeout(initialGreetingTimer);
+      }
       if (!initialGreetingDone && !initialGreetingInProgress) {
+        initialCustomerAudioHeard = false;
         initialGreetingBlockedUntil = Date.now() + 1300;
         scheduleInitialGreeting(1650);
         logEvent("initial_greeting_delayed_for_inbound_audio", { callSid: session.callSid });
         return;
       }
       if (initialGreetingInProgress) {
-        initialCustomerAudioHeard = true;
         clearTimeout(initialGreetingTimer);
         logEvent("initial_greeting_interrupt_ignored", { callSid: session.callSid });
         return;
