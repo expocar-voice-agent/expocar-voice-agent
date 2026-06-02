@@ -40,6 +40,15 @@ function slimSlot(slot) {
   };
 }
 
+function spokenAlternatives(slots = []) {
+  const labels = slots.map((slot) => slot.label).filter(Boolean);
+  if (!labels.length) return "";
+  const prefixes = ["prima possibilita", "seconda possibilita", "terza possibilita"];
+  return labels
+    .map((label, index) => `${prefixes[index] || "altra possibilita"}: ${label}`)
+    .join(". ");
+}
+
 function buildImportSummary(args) {
   return [
     "Richiesta importazione auto Expocar",
@@ -332,7 +341,7 @@ export async function runTool(name, args, context = {}) {
       shownCount: inventory.results.length,
       totalAvailable: inventory.totalAvailable,
       message: inventory.count
-        ? `Auto trovate nello stock Expocar. Totale risultati compatibili: ${inventory.count}. Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Comunica al cliente solo i risultati principali mostrati.`
+        ? `Auto trovate nello stock Expocar. Totale risultati compatibili: ${inventory.count}. Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Comunica al cliente solo marca, modello, anno, chilometri arrotondati e prezzo dei risultati mostrati. Non leggere titoli, versioni, allestimenti, optional o descrizioni se non richiesti esplicitamente.`
         : `Nessun risultato trovato con questi filtri. Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Non dire che e impossibile: proponi importazione su misura o chiedi una verifica a un consulente.`
     };
   }
@@ -352,10 +361,12 @@ export async function runTool(name, args, context = {}) {
         const slot = slimSlot(requestedSlot.slot);
         const alternatives = (requestedSlot.alternatives || []).map(slimSlot).filter(Boolean);
         const nextAlternatives = (requestedSlot.nextAlternatives || []).map(slimSlot).filter(Boolean);
+        const sameDayText = spokenAlternatives(alternatives);
+        const nextDayText = spokenAlternatives(nextAlternatives);
         const alternativeText = alternatives.length
-          ? `Alternative disponibili nello stesso giorno: ${alternatives.map((item) => item.label).join(", ")}.`
+          ? `Alternative disponibili nello stesso giorno. ${sameDayText}.`
           : nextAlternatives.length
-            ? `Per quel giorno non ci sono orari disponibili. Prime alternative nei giorni successivi: ${nextAlternatives.map((item) => item.label).join(", ")}.`
+            ? `Per quel giorno non ci sono orari disponibili. Prime alternative nei giorni successivi. ${nextDayText}.`
             : "Non risultano alternative immediate: raccogli una preferenza e fai confermare da un consulente.";
         return {
           bookingSystemAvailable: true,
@@ -375,12 +386,13 @@ export async function runTool(name, args, context = {}) {
         "SimplyBook non ha risposto in tempo."
       );
       const alternatives = slots.slice(0, 2).map(slimSlot).filter(Boolean);
+      const alternativesText = spokenAlternatives(alternatives);
       return {
         bookingSystemAvailable: true,
         alternatives,
         firstAvailable: alternatives[0] || null,
         message: alternatives.length
-          ? `Prime disponibilita: ${alternatives.map((slot) => slot.label).join(", ")}. Proponile al cliente.`
+          ? `Prime disponibilita. ${alternativesText}. Proponile al cliente scandendo bene giorno e ora.`
           : "Non risultano slot liberi immediati. Raccogli preferenza e fai confermare da un consulente."
       };
     } catch (error) {
@@ -502,7 +514,7 @@ export async function runTool(name, args, context = {}) {
         label: formatRomeDate(appointmentStart)
       },
       sellerNotified: true,
-      message: `Appuntamento confermato per ${formatRomeDate(appointmentStart)}. SimplyBook gestira conferma, SMS e sincronizzazione calendario.`
+      message: `Prenotazione confermata per ${formatRomeDate(appointmentStart)}. Dillo una sola volta, in modo breve e naturale. SimplyBook gestira conferma, SMS e sincronizzazione calendario.`
     };
   }
 

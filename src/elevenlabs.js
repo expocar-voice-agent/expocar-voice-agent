@@ -52,6 +52,12 @@ function italianHour(value) {
   return words[Number(value)] || String(value);
 }
 
+function spokenTime(hour, minute = "00") {
+  if (minute === "00") return `alle ore ${italianHour(hour)}`;
+  if (minute === "30") return `alle ore ${italianHour(hour)} e trenta`;
+  return `alle ore ${italianHour(hour)} e ${spellDigits(minute)}`;
+}
+
 function roundedKmText(value) {
   const km = Number(compactNumber(value));
   if (!Number.isFinite(km) || km <= 0) return `${value} chilometri`;
@@ -111,14 +117,15 @@ export function prepareTextForTelephoneTts(text) {
 
   output = output.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, "$3/$2/$1");
   output = output.replace(/\balle ore\s+(\d{1,2}):(\d{2})\b/gi, (_match, hour, minute) => {
-    if (minute === "00") return `alle ore ${italianHour(hour)}`;
-    if (minute === "30") return `alle ore ${italianHour(hour)} e trenta`;
-    return `alle ore ${italianHour(hour)} e ${spellDigits(minute)}`;
+    return spokenTime(hour, minute);
   });
   output = output.replace(/\balle ore\s+(\d{1,2})(?:\s+e\s+(\d{2}))?\b/gi, (_match, hour, minute) => {
-    if (!minute || minute === "00") return `alle ore ${italianHour(hour)}`;
-    if (minute === "30") return `alle ore ${italianHour(hour)} e trenta`;
-    return `alle ore ${italianHour(hour)} e ${spellDigits(minute)}`;
+    return spokenTime(hour, minute || "00");
+  });
+  output = output.replace(/\b(?:ore\s*)?(\d{1,2}):(\d{2})\b/gi, (_match, hour, minute) => {
+    const numericHour = Number(hour);
+    if (numericHour < 7 || numericHour > 22) return _match;
+    return spokenTime(hour, minute);
   });
   return output.replace(/\s+/g, " ").trim();
 }

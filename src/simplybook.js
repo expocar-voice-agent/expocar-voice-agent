@@ -242,6 +242,33 @@ function minutesFromTime(time) {
   return (hour || 0) * 60 + (minute || 0);
 }
 
+function italianHour(value) {
+  const words = {
+    0: "zero",
+    1: "una",
+    2: "due",
+    3: "tre",
+    4: "quattro",
+    5: "cinque",
+    6: "sei",
+    7: "sette",
+    8: "otto",
+    9: "nove",
+    10: "dieci",
+    11: "undici",
+    12: "dodici",
+    13: "tredici",
+    14: "quattordici",
+    15: "quindici",
+    16: "sedici",
+    17: "diciassette",
+    18: "diciotto",
+    19: "diciannove",
+    20: "venti"
+  };
+  return words[Number(value)] || String(value);
+}
+
 function spokenSlotLabel(date, time) {
   const [hour, minute] = String(time || "").split(":").map(Number);
   const start = dateFromRomeWallTime(date, hour || 0, minute || 0);
@@ -251,8 +278,9 @@ function spokenSlotLabel(date, time) {
     day: "numeric",
     month: "long"
   }).format(start);
-  if (minute) return `${day} alle ore ${hour} e ${String(minute).padStart(2, "0")}`;
-  return `${day} alle ore ${hour}`;
+  if (minute === 30) return `${day}, alle ore ${italianHour(hour)} e trenta`;
+  if (minute) return `${day}, alle ore ${italianHour(hour)} e ${String(minute).padStart(2, "0").split("").join(" ")}`;
+  return `${day}, alle ore ${italianHour(hour)}`;
 }
 
 function nearestSlots(slots, requestedTime, limit = 3) {
@@ -327,10 +355,16 @@ export async function checkSimplyBookSlot(args = {}) {
   const { date, time } = appointmentParts(args);
   const validation = validateBusinessWindow(date, time);
   if (!validation.ok) {
+    const fallbackLabel = date && time ? spokenSlotLabel(date, time) : "orario richiesto";
     return {
       available: false,
       reason: validation.reason,
-      slot: { start: date && time ? dateFromRomeWallTime(date, ...time.split(":").map(Number).slice(0, 2)).toISOString() : "" }
+      slot: {
+        start: date && time ? dateFromRomeWallTime(date, ...time.split(":").map(Number).slice(0, 2)).toISOString() : "",
+        date,
+        time,
+        label: fallbackLabel
+      }
     };
   }
 
@@ -360,7 +394,12 @@ export async function checkSimplyBookSlot(args = {}) {
   return {
     available,
     reason: available ? "" : "Lo slot richiesto non risulta disponibile.",
-    slot: { start: dateFromRomeWallTime(date, ...time.split(":").map(Number).slice(0, 2)).toISOString(), date, time },
+    slot: {
+      start: dateFromRomeWallTime(date, ...time.split(":").map(Number).slice(0, 2)).toISOString(),
+      date,
+      time,
+      label: spokenSlotLabel(date, time)
+    },
     alternatives: sameDayAlternatives.map((slot) => ({
       start: slot.start,
       date: slot.date,

@@ -379,7 +379,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: `Di esattamente: ${greetingForRome()}, Expocar Italia sono Giusy. In cosa posso esserle utile?`
+        instructions: `Di esattamente: Expocaritalia, ${greetingForRome()}, sono Giusy. Come posso aiutarla?`
       }
     }));
   });
@@ -486,7 +486,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   function initialGreetingText() {
-    return `${greetingForRome()}, Expocar Italia sono Giusy. In cosa posso esserle utile?`;
+    return `Expocaritalia, ${greetingForRome()}, sono Giusy. Come posso aiutarla?`;
   }
 
   function customerHasSpoken() {

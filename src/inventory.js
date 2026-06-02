@@ -131,13 +131,9 @@ function publicCar(car) {
   return {
     brand: car.brand || "",
     model: car.model || "",
-    version: car.version || "",
     price: car.price || "",
     mileage: car.mileage || "",
-    year: car.year || "",
-    fuel: car.fuel || "",
-    gearbox: car.gearbox || "",
-    color: car.color || ""
+    year: car.year || ""
   };
 }
 
