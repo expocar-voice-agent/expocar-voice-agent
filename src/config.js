@@ -38,7 +38,7 @@ export const config = {
     style: optionalNumber("ELEVENLABS_STYLE", 0),
     useSpeakerBoost: process.env.ELEVENLABS_USE_SPEAKER_BOOST === "true",
     frameBytes: optionalNumber("ELEVENLABS_FRAME_BYTES", 160),
-    frameDelayMs: optionalNumber("ELEVENLABS_FRAME_DELAY_MS", 20)
+    frameDelayMs: optionalNumber("ELEVENLABS_FRAME_DELAY_MS", 0)
   },
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID || "",
