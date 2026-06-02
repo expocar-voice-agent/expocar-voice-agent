@@ -544,8 +544,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
       logEvent("anti_silence_prompt", { callSid: session.callSid, idleMs });
       sendQuickAudio(waitingForCustomer
-        ? "Il cliente e rimasto in silenzio. Di una frase naturale e breve, non robotica: E ancora in linea? oppure Mi sente?"
-        : "Di una frase brevissima e naturale, variando le parole: Aspetti, guardo un attimo, oppure Le controllo subito.");
+        ? "Di una sola frase molto naturale, come in una telefonata reale: Mi sente? oppure E ancora in linea?"
+        : "Di una sola frase brevissima e naturale, senza ripeterla due volte: Sì, guardo subito. oppure Un attimo che controllo.");
       lastAssistantAudioAt = Date.now();
       waitingForCustomer = true;
       resetSilenceTimer();
