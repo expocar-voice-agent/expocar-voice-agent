@@ -409,7 +409,7 @@ export async function runTool(name, args, context = {}) {
       totalAvailable: inventory.totalAvailable,
       spokenReply,
       message: inventory.count
-        ? `Usa spokenReply come base, senza leggere campi tecnici. Non aggiungere titoli, versioni, allestimenti, optional o descrizioni se non richiesti esplicitamente.`
+        ? `Usa spokenReply come base, senza leggere campi tecnici. Per elenco iniziale usa solo spokenLine. Se il cliente chiede dettagli base come cambio, carburante, colore o cavalli, usa detailLine o rispondi solo al dettaglio richiesto. Non aggiungere titoli, versioni, allestimenti, optional o descrizioni.`
         : `Usa spokenReply. Non dire che e impossibile: proponi ricerca su misura o verifica con consulente.`
     };
   }

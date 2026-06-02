@@ -46,6 +46,7 @@ function normalizeAd(raw) {
     fuel: firstDefined(raw.fuel, raw.alimentazione, raw.fuel_type),
     gearbox: firstDefined(raw.gearbox, raw.cambio),
     color: firstDefined(raw.color, raw.colore),
+    powerCv: firstDefined(raw.power_cv, raw.cv, raw.cavalli, raw.hp, raw.horsepower),
     description: firstDefined(raw.description, raw.descrizione, raw.note),
     raw
   };
@@ -157,21 +158,38 @@ function spokenPrice(value) {
   return `${thousands} mila ${rest} euro`;
 }
 
+function spokenPower(value) {
+  const power = toNumber(value);
+  return power ? `${power} cavalli` : "";
+}
+
 function publicCar(car) {
   const brand = cleanSpokenText(car.brand);
   const model = cleanSpokenText(car.model);
   const year = cleanYear(car.year);
   const mileageText = spokenMileage(car.mileage);
   const priceText = spokenPrice(car.price);
+  const color = cleanSpokenText(car.color);
+  const gearbox = cleanSpokenText(car.gearbox);
+  const fuel = cleanSpokenText(car.fuel);
+  const powerText = spokenPower(car.powerCv);
   const spokenLine = [
     [brand, model].filter(Boolean).join(" "),
     year ? `anno ${year}` : "",
     mileageText,
     priceText ? `prezzo ${priceText}` : ""
   ].filter(Boolean).join(", ");
+  const detailLine = [
+    spokenLine,
+    color ? `colore ${color}` : "",
+    gearbox ? `cambio ${gearbox}` : "",
+    fuel ? `carburante ${fuel}` : "",
+    powerText ? `potenza ${powerText}` : ""
+  ].filter(Boolean).join(", ");
 
   return {
-    spokenLine
+    spokenLine,
+    detailLine
   };
 }
 
