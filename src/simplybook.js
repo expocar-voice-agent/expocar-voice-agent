@@ -224,6 +224,18 @@ function flattenSlots(matrix) {
   return slots;
 }
 
+function minutesFromTime(time) {
+  const [hour, minute] = String(time || "").split(":").map(Number);
+  return (hour || 0) * 60 + (minute || 0);
+}
+
+function nearestSlots(slots, requestedTime, limit = 3) {
+  const requestedMinutes = minutesFromTime(requestedTime);
+  return [...slots]
+    .sort((a, b) => Math.abs(minutesFromTime(a.time) - requestedMinutes) - Math.abs(minutesFromTime(b.time) - requestedMinutes))
+    .slice(0, limit);
+}
+
 async function getAvailableUnitsForSlot(eventId, date, time) {
   const dateTime = `${date} ${time}`;
   const units = await publicRpc("getAvailableUnits", [eventId, dateTime, 1]);
@@ -305,10 +317,36 @@ export async function checkSimplyBookSlot(args = {}) {
   ]);
   const times = (matrix?.[date] || []).map(normalizeTime);
   const available = times.includes(time);
+  const sameDayAlternatives = nearestSlots(flattenSlots(matrix), time, 3);
+  let nextAlternatives = [];
+
+  if (!available && !sameDayAlternatives.length) {
+    const nextMatrix = await publicRpc("getStartTimeMatrix", [
+      addDays(date, 1),
+      addDays(date, 7),
+      serviceId(),
+      configuredUnitId(),
+      1
+    ]);
+    nextAlternatives = nearestSlots(flattenSlots(nextMatrix), time, 3);
+  }
+
   return {
     available,
     reason: available ? "" : "Lo slot richiesto non risulta disponibile.",
-    slot: { start: dateFromRomeWallTime(date, ...time.split(":").map(Number).slice(0, 2)).toISOString(), date, time }
+    slot: { start: dateFromRomeWallTime(date, ...time.split(":").map(Number).slice(0, 2)).toISOString(), date, time },
+    alternatives: sameDayAlternatives.map((slot) => ({
+      start: slot.start,
+      date: slot.date,
+      time: slot.time,
+      label: slot.label
+    })),
+    nextAlternatives: nextAlternatives.map((slot) => ({
+      start: slot.start,
+      date: slot.date,
+      time: slot.time,
+      label: slot.label
+    }))
   };
 }
 

@@ -314,14 +314,23 @@ export async function runTool(name, args, context = {}) {
           "SimplyBook non ha risposto in tempo."
         );
         const slot = slimSlot(requestedSlot.slot);
+        const alternatives = (requestedSlot.alternatives || []).map(slimSlot).filter(Boolean);
+        const nextAlternatives = (requestedSlot.nextAlternatives || []).map(slimSlot).filter(Boolean);
+        const alternativeText = alternatives.length
+          ? `Alternative disponibili nello stesso giorno: ${alternatives.map((item) => item.label).join(", ")}.`
+          : nextAlternatives.length
+            ? `Per quel giorno non ci sono orari disponibili. Prime alternative nei giorni successivi: ${nextAlternatives.map((item) => item.label).join(", ")}.`
+            : "Non risultano alternative immediate: raccogli una preferenza e fai confermare da un consulente.";
         return {
           bookingSystemAvailable: true,
           requestedAvailable: Boolean(requestedSlot.available),
           requestedLabel: slot?.label || "orario richiesto",
+          alternatives,
+          nextAlternatives,
           reason: requestedSlot.reason || "",
           message: requestedSlot.available
             ? `Lo slot ${slot?.label || "richiesto"} e disponibile. Se hai nome e telefono, crea l'appuntamento.`
-            : `Lo slot richiesto non e disponibile: ${requestedSlot.reason || "risulta occupato"}. Proponi una alternativa.`
+            : `Lo slot richiesto non e disponibile: ${requestedSlot.reason || "risulta occupato"}. ${alternativeText}`
         };
       }
       const slots = await withTimeout(

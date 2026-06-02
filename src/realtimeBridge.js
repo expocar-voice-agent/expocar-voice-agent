@@ -1,4 +1,4 @@
-import WebSocket from "ws";
+﻿import WebSocket from "ws";
 import { config } from "./config.js";
 import { agentInstructions } from "./agentPrompt.js";
 import { logEvent } from "./logger.js";
@@ -28,13 +28,31 @@ function normalizeLeadText(value) {
     .toLowerCase();
 }
 
+function setLeadFact(session, key, value) {
+  const clean = clipText(value, 260);
+  if (clean) session.leadFacts[key] = clean;
+}
+
+function extractEmail(text) {
+  return String(text || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "";
+}
+
+function extractName(text) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  const match = clean.match(/\b(?:mi chiamo|sono|nome\s+e|il nome e|nome)\s+([a-z']{3,}(?:\s+[a-z']{3,})?)/i);
+  if (!match) return "";
+  const name = match[1].trim();
+  return /marco|expocar|buongiorno|pomeriggio|buonasera/i.test(name) ? "" : name;
+}
+
 function updateLeadFacts(session, speaker, text) {
   if (speaker !== "Cliente") return;
   const clean = clipText(text, 220);
   if (!clean || clean.length < 4) return;
 
   const normalized = normalizeLeadText(clean);
-  const looksForeign = /[a-z]{4,}\s+[a-z]{4,}\s+[a-z]{4,}/i.test(clean) && !/[àèéìòù]/i.test(clean);
+  const looksForeign = /\b(thank you|please|hello|good morning|how can i help|appointment request|customer asked)\b/i.test(clean)
+    && !/\b(appuntamento|auto|macchina|prezzo|budget|domani|oggi|telefono|nome|email|consulente)\b/.test(normalized);
   if (looksForeign) return;
 
   const mentionsAppointment = /\b(appuntamento|domani|oggi|lunedi|martedi|mercoledi|giovedi|venerdi|sabato|domenica|alle\s+\d{1,2}|consulente)\b/.test(normalized);
@@ -42,13 +60,17 @@ function updateLeadFacts(session, speaker, text) {
   const mentionsBudget = /\b(budget|euro|prezzo|finanziamento|leasing|permuta|sconto)\b/.test(normalized) || /\d{2,3}\.?\d{3}/.test(normalized);
   const mentionsVehicle = /\b(auto|macchina|vettura|audi|bmw|mercedes|porsche|range|smart|x5|q3|benzina|diesel|ibrida|elettrica|suv)\b/.test(normalized);
   const mentionsSeaNext = /\b(sea\s*next|seanxt|scooter|subacque)\b/.test(normalized);
+  const email = extractEmail(clean);
+  const name = extractName(clean);
 
-  if (mentionsAppointment) session.leadFacts.appointment = clean;
-  if (mentionsImport) session.leadFacts.importRequest = clean;
-  if (mentionsBudget) session.leadFacts.budget = clean;
-  if (mentionsVehicle || mentionsSeaNext) session.leadFacts.interest = clean;
+  if (email) setLeadFact(session, "email", email);
+  if (name) setLeadFact(session, "name", name);
+  if (mentionsAppointment) setLeadFact(session, "appointment", clean);
+  if (mentionsImport) setLeadFact(session, "importRequest", clean);
+  if (mentionsBudget) setLeadFact(session, "budget", clean);
+  if (mentionsVehicle || mentionsSeaNext) setLeadFact(session, "interest", clean);
   if (!session.leadFacts.request && (mentionsAppointment || mentionsImport || mentionsBudget || mentionsVehicle || mentionsSeaNext)) {
-    session.leadFacts.request = clean;
+    setLeadFact(session, "request", clean);
   }
 }
 
@@ -84,31 +106,69 @@ function greetingForRome() {
   return "Buonasera";
 }
 
+function formatRomeDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: config.business.timezone,
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function customerTranscriptPieces(session, limit = 4) {
+  return session.transcript
+    .filter((piece) => piece.speaker === "Cliente")
+    .map((piece) => clipText(piece.text, 180))
+    .filter(Boolean)
+    .filter((text, index, list) => list.indexOf(text) === index)
+    .slice(-limit);
+}
+
+function buildLeadSummary(session) {
+  const facts = session.leadFacts;
+  if (facts.appointmentConfirmed) {
+    return `Appuntamento fissato: ${facts.appointmentConfirmed}${facts.interest ? ` per ${facts.interest}` : ""}.`;
+  }
+  if (facts.transfer) {
+    return `Il cliente ha chiesto contatto diretto o consulente. ${facts.transfer}`;
+  }
+  if (facts.importRequest) {
+    return `Richiesta importazione/ricerca su misura: ${facts.importRequest}`;
+  }
+  if (facts.request) return facts.request;
+  if (facts.interest) return `Cliente interessato a ${facts.interest}.`;
+  return "Richiesta da completare: consultare registrazione chiamata.";
+}
+
 function buildLeadWhatsapp(session) {
   const durationSeconds = Math.max(0, Math.round((Date.now() - session.startedAt) / 1000));
+  const facts = session.leadFacts;
+  const customerPieces = customerTranscriptPieces(session);
 
   return [
     "Lead ExpoCar",
-    `Cliente: ${session.from || "numero non disponibile"}`,
+    `Telefono cliente: ${facts.phone || session.from || "numero non disponibile"}`,
+    facts.name ? `Nome: ${facts.name}` : "",
+    facts.email ? `Email: ${facts.email}` : "",
     session.callSid ? `Call SID: ${session.callSid}` : "",
     `Durata circa: ${durationSeconds} sec`,
-    session.leadFacts.request ? `Richiesta: ${session.leadFacts.request}` : "",
-    session.leadFacts.interest ? `Interesse: ${session.leadFacts.interest}` : "",
-    session.leadFacts.budget ? `Budget/prezzo: ${session.leadFacts.budget}` : "",
-    session.leadFacts.appointment ? `Appuntamento: ${session.leadFacts.appointment}` : "",
-    session.leadFacts.importRequest ? `Importazione: ${session.leadFacts.importRequest}` : "",
+    "",
+    `Sintesi: ${buildLeadSummary(session)}`,
+    facts.interest ? `Interesse/auto: ${facts.interest}` : "",
+    facts.budget ? `Budget/prezzo: ${facts.budget}` : "",
+    facts.appointmentConfirmed ? `Appuntamento confermato: ${facts.appointmentConfirmed}` : facts.appointment ? `Appuntamento richiesto: ${facts.appointment}` : "",
+    facts.importRequest ? `Importazione: ${facts.importRequest}` : "",
+    facts.transfer ? `Trasferimento/contatto diretto: ${facts.transfer}` : "",
+    facts.notes ? `Note: ${facts.notes}` : "",
+    customerPieces.length ? "" : "",
+    customerPieces.length ? `Elementi detti dal cliente: ${customerPieces.join(" | ")}` : "",
     "",
     "Per il contenuto preciso della conversazione usa la registrazione chiamata."
   ].filter((line) => line !== "").join("\n");
-}
-
-function hasOperationalLead(session) {
-  return session.toolCalls.some((name) => [
-    "avvisa_venditore",
-    "registra_richiesta_importazione",
-    "crea_appuntamento",
-    "trasferisci_chiamata"
-  ].includes(name));
 }
 
 async function sendFinalCallSummary(session) {
@@ -124,20 +184,12 @@ async function sendFinalCallSummary(session) {
   });
 
   try {
-    if (hasOperationalLead(session)) {
-      logEvent("call_lead_whatsapp_skipped", {
-        callSid: session.callSid,
-        from: session.from,
-        reason: "operational_lead_already_sent"
-      });
-    } else {
-      const body = buildLeadWhatsapp(session);
-      await notifySeller({ body });
-      logEvent("call_lead_whatsapp_sent", {
-        callSid: session.callSid,
-        from: session.from
-      });
-    }
+    const body = buildLeadWhatsapp(session);
+    await notifySeller({ body });
+    logEvent("call_lead_whatsapp_sent", {
+      callSid: session.callSid,
+      from: session.from
+    });
   } catch (error) {
     saveLead({
       type: "call_lead_whatsapp_failed",
@@ -174,6 +226,39 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
         setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 2400);
       })
     ]);
+    if (session) {
+      if (args.name) setLeadFact(session, "name", args.name);
+      if (args.phone) setLeadFact(session, "phone", args.phone);
+      if (args.email) setLeadFact(session, "email", args.email);
+      if (args.interest) setLeadFact(session, "interest", args.interest);
+      if (args.notes) setLeadFact(session, "notes", args.notes);
+
+      if (name === "crea_appuntamento") {
+        const appointmentLabel = output?.appointment?.start ? formatRomeDate(output.appointment.start) : "";
+        setLeadFact(session, "appointment", [
+          args.localDate || args.startTime || "",
+          args.localTime || "",
+          args.interest ? `per ${args.interest}` : ""
+        ].filter(Boolean).join(" "));
+        if (appointmentLabel) setLeadFact(session, "appointmentConfirmed", appointmentLabel);
+        if (output?.pendingConfirmation) setLeadFact(session, "notes", "Appuntamento da confermare manualmente.");
+      }
+
+      if (name === "registra_richiesta_importazione") {
+        setLeadFact(session, "importRequest", args.summary || args.request);
+        const car = [args.brand, args.model].filter(Boolean).join(" ");
+        if (car) setLeadFact(session, "interest", car);
+        if (args.budget) setLeadFact(session, "budget", args.budget);
+      }
+
+      if (name === "avvisa_venditore") {
+        setLeadFact(session, "request", args.summary);
+      }
+
+      if (name === "trasferisci_chiamata") {
+        setLeadFact(session, "transfer", args.reason || "Trasferimento richiesto dal cliente.");
+      }
+    }
     logEvent("tool_call_done", { name });
     openaiWs.send(JSON.stringify({
       type: "conversation.item.create",
@@ -622,3 +707,4 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     twilioWs.close();
   });
 }
+
