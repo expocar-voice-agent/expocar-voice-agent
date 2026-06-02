@@ -242,6 +242,19 @@ function minutesFromTime(time) {
   return (hour || 0) * 60 + (minute || 0);
 }
 
+function spokenSlotLabel(date, time) {
+  const [hour, minute] = String(time || "").split(":").map(Number);
+  const start = dateFromRomeWallTime(date, hour || 0, minute || 0);
+  const day = new Intl.DateTimeFormat("it-IT", {
+    timeZone: config.business.timezone,
+    weekday: "long",
+    day: "numeric",
+    month: "long"
+  }).format(start);
+  if (minute) return `${day} alle ore ${hour} e ${String(minute).padStart(2, "0")}`;
+  return `${day} alle ore ${hour}`;
+}
+
 function nearestSlots(slots, requestedTime, limit = 3) {
   const requestedMinutes = minutesFromTime(requestedTime);
   return [...slots]
@@ -306,7 +319,7 @@ export async function getSimplyBookSlots({ preferredDate, localDate, days = 14 }
       start: slot.start,
       date: slot.date,
       time: slot.time,
-      label: slot.label
+      label: spokenSlotLabel(slot.date, slot.time)
     }));
 }
 
@@ -352,13 +365,13 @@ export async function checkSimplyBookSlot(args = {}) {
       start: slot.start,
       date: slot.date,
       time: slot.time,
-      label: slot.label
+      label: spokenSlotLabel(slot.date, slot.time)
     })),
     nextAlternatives: nextAlternatives.map((slot) => ({
       start: slot.start,
       date: slot.date,
       time: slot.time,
-      label: slot.label
+      label: spokenSlotLabel(slot.date, slot.time)
     }))
   };
 }

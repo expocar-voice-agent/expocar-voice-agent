@@ -74,6 +74,20 @@ function normalizePhone(value) {
   return number.startsWith("+") ? number : "";
 }
 
+function isBusinessOpenNow() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: config.business.timezone,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(new Date());
+  const data = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  if (["Sat", "Sun"].includes(data.weekday)) return false;
+  const minutes = Number(data.hour) * 60 + Number(data.minute);
+  return minutes >= config.business.openHour * 60 && minutes < config.business.closeHour * 60;
+}
+
 function withTimeout(promise, ms, message) {
   return Promise.race([
     promise,
@@ -99,6 +113,25 @@ function hasInventoryFilters(args = {}) {
 async function transferActiveCall({ callSid, from, reason }) {
   const client = getTwilioClient();
   const to = normalizePhone(config.twilio.humanTransferTo);
+  if (!isBusinessOpenNow()) {
+    notifySeller({
+      body: [
+        "Lead ExpoCar",
+        `Cliente: ${from || "numero non disponibile"}`,
+        "Richiesta: parlare con un consulente fuori orario",
+        reason ? `Motivo: ${reason}` : "",
+        "Trasferimento: non effettuato, fuori orario lavorativo",
+        "Azione: ricontattare il cliente appena possibile"
+      ].filter(Boolean).join("\n")
+    }).catch(() => {});
+    return {
+      ok: true,
+      transferred: false,
+      outsideBusinessHours: true,
+      phone: to || config.twilio.humanTransferTo,
+      message: "Fuori orario lavorativo. Non trasferire la chiamata: comunica che siamo disponibili dal lunedi al venerdi dalle 10 alle 19 e che puo scriverci su WhatsApp al numero 371 193 8885. Raccogli richiesta e recapito."
+    };
+  }
   if (!client || !callSid || !to) {
     notifySeller({
       body: [

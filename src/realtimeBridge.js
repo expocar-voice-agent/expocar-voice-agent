@@ -522,7 +522,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
       const idleMs = Date.now() - lastAssistantAudioAt;
-      const waitMs = waitingForCustomer ? 7000 : 2200;
+      const waitMs = waitingForCustomer ? 5000 : 2200;
       if (idleMs < waitMs || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
         resetSilenceTimer();
         return;

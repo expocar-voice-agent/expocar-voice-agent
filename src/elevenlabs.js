@@ -25,6 +25,40 @@ function compactNumber(value) {
   return String(value || "").replace(/[.\s]/g, "");
 }
 
+function italianHour(value) {
+  const words = {
+    0: "zero",
+    1: "una",
+    2: "due",
+    3: "tre",
+    4: "quattro",
+    5: "cinque",
+    6: "sei",
+    7: "sette",
+    8: "otto",
+    9: "nove",
+    10: "dieci",
+    11: "undici",
+    12: "dodici",
+    13: "tredici",
+    14: "quattordici",
+    15: "quindici",
+    16: "sedici",
+    17: "diciassette",
+    18: "diciotto",
+    19: "diciannove",
+    20: "venti"
+  };
+  return words[Number(value)] || String(value);
+}
+
+function roundedKmText(value) {
+  const km = Number(compactNumber(value));
+  if (!Number.isFinite(km) || km <= 0) return `${value} chilometri`;
+  const rounded = Math.max(1, Math.floor(km / 1000));
+  return `circa ${rounded} mila chilometri`;
+}
+
 export function prepareTextForTelephoneTts(text) {
   let output = String(text || "")
     .replace(/\s+/g, " ")
@@ -67,10 +101,7 @@ export function prepareTextForTelephoneTts(text) {
   });
 
   output = output.replace(/\b(\d{5,6})\s*(?:km|chilometri)\b/gi, (_match, km) => {
-    const clean = compactNumber(km);
-    const thousands = clean.slice(0, -3);
-    const rest = clean.slice(-3).replace(/^0+/, "");
-    return `${thousands} mila${rest ? ` ${rest}` : ""} chilometri`.replace(/\s+/g, " ");
+    return roundedKmText(km);
   });
 
   output = output.replace(/\b(\+?39)?\s*(3\d{2})\s*(\d{3})\s*(\d{4})\b/g, (_match, prefix, a, b, c) => {
@@ -79,6 +110,16 @@ export function prepareTextForTelephoneTts(text) {
   });
 
   output = output.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, "$3/$2/$1");
+  output = output.replace(/\balle ore\s+(\d{1,2}):(\d{2})\b/gi, (_match, hour, minute) => {
+    if (minute === "00") return `alle ore ${italianHour(hour)}`;
+    if (minute === "30") return `alle ore ${italianHour(hour)} e trenta`;
+    return `alle ore ${italianHour(hour)} e ${spellDigits(minute)}`;
+  });
+  output = output.replace(/\balle ore\s+(\d{1,2})(?:\s+e\s+(\d{2}))?\b/gi, (_match, hour, minute) => {
+    if (!minute || minute === "00") return `alle ore ${italianHour(hour)}`;
+    if (minute === "30") return `alle ore ${italianHour(hour)} e trenta`;
+    return `alle ore ${italianHour(hour)} e ${spellDigits(minute)}`;
+  });
   return output.replace(/\s+/g, " ").trim();
 }
 
