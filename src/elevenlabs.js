@@ -106,9 +106,12 @@ export function prepareTextForTelephoneTts(text) {
     return `${thousands} mila${rest ? ` ${rest}` : ""} euro`.replace(/\s+/g, " ");
   });
 
-  output = output.replace(/\b(\d{5,6})\s*(?:km|chilometri)\b/gi, (_match, km) => {
-    return roundedKmText(km);
+  output = output.replace(/\b(circa\s+)?(\d{5,6})\s*(?:km|chilometri)\b/gi, (_match, approx, km) => {
+    const spoken = roundedKmText(km);
+    return approx ? spoken : spoken;
   });
+
+  output = output.replace(/\bcirca\s+circa\b/gi, "circa");
 
   output = output.replace(/\b(\+?39)?\s*(3\d{2})\s*(\d{3})\s*(\d{4})\b/g, (_match, prefix, a, b, c) => {
     const spokenPrefix = prefix ? "piu trentanove, " : "";

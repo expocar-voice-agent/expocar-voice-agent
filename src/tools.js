@@ -19,6 +19,55 @@ function formatRomeDate(value) {
   }).format(date);
 }
 
+function italianHour(value) {
+  const words = {
+    0: "zero",
+    1: "una",
+    2: "due",
+    3: "tre",
+    4: "quattro",
+    5: "cinque",
+    6: "sei",
+    7: "sette",
+    8: "otto",
+    9: "nove",
+    10: "dieci",
+    11: "undici",
+    12: "dodici",
+    13: "tredici",
+    14: "quattordici",
+    15: "quindici",
+    16: "sedici",
+    17: "diciassette",
+    18: "diciotto",
+    19: "diciannove",
+    20: "venti"
+  };
+  return words[Number(value)] || String(value);
+}
+
+function spokenRomeDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "l'orario richiesto";
+  const parts = new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  const data = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const minute = data.minute || "00";
+  const hourText = minute === "30"
+    ? `${italianHour(data.hour)} e trenta`
+    : minute === "00"
+      ? italianHour(data.hour)
+      : `${italianHour(data.hour)} e ${minute.split("").join(" ")}`;
+  return `${data.weekday} ${Number(data.day)} ${data.month}, alle ore ${hourText}`;
+}
+
 function shortRomeDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "orario da verificare";
@@ -47,6 +96,19 @@ function spokenAlternatives(slots = []) {
   return labels
     .map((label, index) => `${prefixes[index] || "altra possibilita"}: ${label}`)
     .join(". ");
+}
+
+function inventorySpokenReply(inventory) {
+  const lines = (inventory.results || []).slice(0, 3).map((car) => car.spokenLine).filter(Boolean);
+  if (!lines.length) {
+    return "Al momento non vedo una corrispondenza precisa in stock. Se vuole, posso raccogliere le preferenze e far verificare una ricerca su misura.";
+  }
+  const prefix = inventory.count > lines.length
+    ? `Ne vedo ${inventory.count} compatibili. Le dico le prime ${lines.length}: `
+    : inventory.count === 1
+      ? "Ne vedo una disponibile: "
+      : `Ne vedo ${inventory.count} disponibili: `;
+  return `${prefix}${lines.join(". ")}. Vuole fissare una visita per vederne una?`;
 }
 
 function buildImportSummary(args) {
@@ -138,7 +200,8 @@ async function transferActiveCall({ callSid, from, reason }) {
       transferred: false,
       outsideBusinessHours: true,
       phone: to || config.twilio.humanTransferTo,
-      message: "Fuori orario lavorativo. Non trasferire la chiamata: comunica che siamo disponibili dal lunedi al venerdi dalle 10 alle 19 e che puo scriverci su WhatsApp al numero 371 193 8885. Raccogli richiesta e recapito."
+      spokenReply: "In questo momento i consulenti non sono disponibili al trasferimento diretto. Siamo operativi dal lunedi al venerdi, dalle dieci alle diciannove. Puo scriverci anche su WhatsApp al tre sette uno, uno nove tre, otto otto otto cinque. Intanto, se vuole, raccolgo io la richiesta.",
+      message: "Usa spokenReply. Non trasferire fuori orario."
     };
   }
   if (!client || !callSid || !to) {
@@ -156,7 +219,8 @@ async function transferActiveCall({ callSid, from, reason }) {
       ok: false,
       transferred: false,
       phone: to || config.twilio.humanTransferTo,
-      message: "Trasferimento non disponibile. Comunica il numero diretto e WhatsApp."
+      spokenReply: "Al momento non riesco a trasferire la chiamata. Puo chiamarci o scriverci su WhatsApp al tre sette uno, uno nove tre, otto otto otto cinque. Intanto posso annotare la richiesta.",
+      message: "Usa spokenReply."
     };
   }
 
@@ -198,7 +262,8 @@ async function transferActiveCall({ callSid, from, reason }) {
     ok: true,
     transferred: true,
     phone: to,
-    message: "Trasferimento avviato verso il consulente."
+    spokenReply: "La metto in contatto con un consulente.",
+    message: "Trasferimento avviato. Non aggiungere altro."
   };
 }
 
@@ -331,18 +396,21 @@ export async function runTool(name, args, context = {}) {
         count: inventory.totalAvailable,
         shownCount: 0,
         totalAvailable: inventory.totalAvailable,
-        message: `Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Rispondi solo con il totale e chiedi marca, modello o budget per filtrare.`
+        spokenReply: `In questo momento vedo ${inventory.totalAvailable} veicoli disponibili nel nostro parco. Che tipo di auto sta cercando?`,
+        message: `Usa spokenReply. Non elencare modelli se il cliente ha chiesto solo il totale.`
       };
     }
 
+    const spokenReply = inventorySpokenReply(inventory);
     return {
       results: inventory.results,
       count: inventory.count,
       shownCount: inventory.results.length,
       totalAvailable: inventory.totalAvailable,
+      spokenReply,
       message: inventory.count
-        ? `Auto trovate nello stock Expocar. Totale risultati compatibili: ${inventory.count}. Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Comunica al cliente solo marca, modello, anno, chilometri arrotondati e prezzo dei risultati mostrati. Non leggere titoli, versioni, allestimenti, optional o descrizioni se non richiesti esplicitamente.`
-        : `Nessun risultato trovato con questi filtri. Totale veicoli disponibili in sede/parco: ${inventory.totalAvailable}. Non dire che e impossibile: proponi importazione su misura o chiedi una verifica a un consulente.`
+        ? `Usa spokenReply come base, senza leggere campi tecnici. Non aggiungere titoli, versioni, allestimenti, optional o descrizioni se non richiesti esplicitamente.`
+        : `Usa spokenReply. Non dire che e impossibile: proponi ricerca su misura o verifica con consulente.`
     };
   }
 
@@ -375,9 +443,16 @@ export async function runTool(name, args, context = {}) {
           alternatives,
           nextAlternatives,
           reason: requestedSlot.reason || "",
+          spokenReply: requestedSlot.available
+            ? `${slot?.label || "L'orario richiesto"} e disponibile. Mi conferma nome, telefono ed email per bloccarlo?`
+            : alternatives.length
+              ? `Quell'orario non e disponibile. Le posso proporre queste alternative: ${sameDayText}. Quale preferisce?`
+              : nextAlternatives.length
+                ? `Per quel giorno non vedo orari liberi. Le propongo queste alternative: ${nextDayText}. Quale le torna meglio?`
+                : "Per quell'orario non vedo disponibilita immediate. Mi lascia la preferenza e la faccio verificare in sede?",
           message: requestedSlot.available
-            ? `Lo slot ${slot?.label || "richiesto"} e disponibile. Se hai nome e telefono, crea l'appuntamento.`
-            : `Lo slot richiesto non e disponibile: ${requestedSlot.reason || "risulta occupato"}. ${alternativeText}`
+            ? `Usa spokenReply. Se mancano nome, telefono o email chiedili prima di creare la prenotazione.`
+            : `Usa spokenReply. ${alternativeText}`
         };
       }
       const slots = await withTimeout(
@@ -391,9 +466,12 @@ export async function runTool(name, args, context = {}) {
         bookingSystemAvailable: true,
         alternatives,
         firstAvailable: alternatives[0] || null,
+        spokenReply: alternatives.length
+          ? `Le prime disponibilita che vedo sono queste: ${alternativesText}. Quale preferisce?`
+          : "Non vedo orari liberi immediati. Mi dice giorno e fascia oraria preferiti e lo faccio verificare in sede?",
         message: alternatives.length
-          ? `Prime disponibilita. ${alternativesText}. Proponile al cliente scandendo bene giorno e ora.`
-          : "Non risultano slot liberi immediati. Raccogli preferenza e fai confermare da un consulente."
+          ? `Usa spokenReply scandendo bene giorno e ora.`
+          : "Usa spokenReply."
       };
     } catch (error) {
       saveLead({
@@ -416,7 +494,8 @@ export async function runTool(name, args, context = {}) {
       return {
         slots: [],
         bookingSystemAvailable: false,
-        message: "Sistema prenotazioni momentaneamente lento. Raccogli nome, telefono, giorno e ora preferiti; spiega in modo naturale che lo fai verificare in sede."
+        spokenReply: "Il controllo agenda sta impiegando qualche secondo. Intanto mi lasci nome, giorno e orario preferito, cosi lo faccio verificare subito in sede.",
+        message: "Usa spokenReply. Non restare in silenzio."
       };
     }
   }
@@ -426,14 +505,16 @@ export async function runTool(name, args, context = {}) {
       return {
         appointment: null,
         missingEmailQuestion: true,
-        message: "Prima di creare l'appuntamento chiedi l'indirizzo email al cliente. Se non ce l'ha o non vuole comunicarlo, registralo e poi puoi procedere."
+        spokenReply: "Mi lascia anche un indirizzo email per la conferma? Se preferisce non comunicarlo, va bene lo stesso.",
+        message: "Usa spokenReply. Dopo la risposta potrai procedere."
       };
     }
     if (!args.email && !args.emailUnavailable) {
       return {
         appointment: null,
         missingEmailAnswer: true,
-        message: "Hai chiesto l'email ma manca ancora la risposta. Chiedi se puo comunicarla; se non ce l'ha o preferisce non darla, procedi indicando emailUnavailable true."
+        spokenReply: "Mi conferma se vuole lasciarmi l'email o se preferisce procedere senza?",
+        message: "Usa spokenReply."
       };
     }
     let appointment;
@@ -475,7 +556,8 @@ export async function runTool(name, args, context = {}) {
       return {
         appointment: null,
         pendingConfirmation: true,
-        message: "Sistema prenotazioni momentaneamente lento. Non confermare come definitivo: prendi nota e di' che lo fai verificare in sede."
+        spokenReply: "Ho preso nota della richiesta. La faccio verificare in sede e la ricontattiamo per la conferma definitiva.",
+        message: "Usa spokenReply. Non dire confermato."
       };
     }
     const appointmentStart = appointment.start || args.startTime;
@@ -511,10 +593,11 @@ export async function runTool(name, args, context = {}) {
     return {
       appointment: {
         start: appointmentStart,
-        label: formatRomeDate(appointmentStart)
+        label: spokenRomeDate(appointmentStart)
       },
       sellerNotified: true,
-      message: `Prenotazione confermata per ${formatRomeDate(appointmentStart)}. Dillo una sola volta, in modo breve e naturale. SimplyBook gestira conferma, SMS e sincronizzazione calendario.`
+      spokenReply: `Va bene, ho fissato la visita per ${spokenRomeDate(appointmentStart)}. Ricevera la conferma dal nostro sistema.`,
+      message: "Usa spokenReply. Non nominare SimplyBook e non ripetere la conferma."
     };
   }
 

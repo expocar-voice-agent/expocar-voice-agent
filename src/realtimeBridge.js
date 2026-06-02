@@ -330,7 +330,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
     type: "response.create",
     response: {
       output_modalities: [elevenLabsConfigured() ? "text" : "audio"],
-      instructions: "Rispondi subito in italiano, in modo naturale, con una frase breve. Non usare spagnolo, inglese o altre lingue. Se il sistema prenotazioni o gli strumenti sono lenti, non restare in silenzio: raccogli nome, telefono e orario preferito, e di' che lo fai verificare in sede."
+      instructions: "Rispondi subito in italiano, in modo naturale e breve. Se il risultato dello strumento contiene spokenReply, usala come base della risposta senza leggere campi tecnici, JSON, id, slot, date ISO o nomi di sistemi. Non usare spagnolo, inglese o altre lingue. Se uno strumento e lento, non restare in silenzio: raccogli i dati mancanti e di' che li fai verificare in sede."
     }
   }));
 }

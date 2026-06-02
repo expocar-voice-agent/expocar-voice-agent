@@ -127,13 +127,51 @@ function toNumber(value) {
   return cleaned ? Number(cleaned) : undefined;
 }
 
+function cleanYear(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/\b(19|20)\d{2}\b/);
+  return match ? match[0] : text;
+}
+
+function cleanSpokenText(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function spokenMileage(value) {
+  const km = toNumber(value);
+  if (!km) return "";
+  return `circa ${Math.max(1, Math.floor(km / 1000))} mila chilometri`;
+}
+
+function spokenPrice(value) {
+  const price = toNumber(value);
+  if (!price) return "";
+  const thousands = Math.floor(price / 1000);
+  const rest = price % 1000;
+  if (rest === 0) return `${thousands} mila euro`;
+  return `${thousands} mila ${rest} euro`;
+}
+
 function publicCar(car) {
+  const brand = cleanSpokenText(car.brand);
+  const model = cleanSpokenText(car.model);
+  const year = cleanYear(car.year);
+  const mileageText = spokenMileage(car.mileage);
+  const priceText = spokenPrice(car.price);
+  const spokenLine = [
+    [brand, model].filter(Boolean).join(" "),
+    year ? `anno ${year}` : "",
+    mileageText,
+    priceText ? `prezzo ${priceText}` : ""
+  ].filter(Boolean).join(", ");
+
   return {
-    brand: car.brand || "",
-    model: car.model || "",
-    price: car.price || "",
-    mileage: car.mileage || "",
-    year: car.year || ""
+    spokenLine
   };
 }
 
