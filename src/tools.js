@@ -1,7 +1,7 @@
 import { searchInventoryDetailed } from "./inventory.js";
-import { checkAppointmentSlot, createAppointment, getAvailableSlots } from "./calendar.js";
+import { checkSimplyBookSlot, createSimplyBookBooking, getSimplyBookSlots } from "./simplybook.js";
 import { saveLead } from "./leads.js";
-import { notifySeller, normalizeWhatsappNumber, sendAppointmentWhatsapp } from "./whatsapp.js";
+import { notifySeller } from "./whatsapp.js";
 import twilio from "twilio";
 import { config } from "./config.js";
 
@@ -36,7 +36,7 @@ function slimSlot(slot) {
   if (!slot) return null;
   return {
     start: slot.start,
-    label: shortRomeDate(slot.start)
+    label: slot.label || shortRomeDate(slot.start)
   };
 }
 
@@ -208,7 +208,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "crea_appuntamento",
-    description: "Crea appuntamento Google Calendar.",
+    description: "Crea appuntamento su SimplyBook.",
     parameters: {
       type: "object",
       required: ["name", "phone", "interest", "startTime"],
@@ -265,7 +265,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "avvisa_venditore",
-    description: "Invia nota WhatsApp al venditore.",
+    description: "Invia nota al venditore.",
     parameters: {
       type: "object",
       required: ["summary"],
@@ -304,17 +304,17 @@ export async function runTool(name, args, context = {}) {
     try {
       if (args.requestedStartTime) {
         const requestedSlot = await withTimeout(
-          checkAppointmentSlot({
+          checkSimplyBookSlot({
             startTime: args.requestedStartTime,
             localDate: args.localDate,
             localTime: args.localTime
           }),
           1800,
-          "Google Calendar non ha risposto in tempo."
+          "SimplyBook non ha risposto in tempo."
         );
         const slot = slimSlot(requestedSlot.slot);
         return {
-          calendarAvailable: true,
+          bookingSystemAvailable: true,
           requestedAvailable: Boolean(requestedSlot.available),
           requestedLabel: slot?.label || "orario richiesto",
           reason: requestedSlot.reason || "",
@@ -324,13 +324,13 @@ export async function runTool(name, args, context = {}) {
         };
       }
       const slots = await withTimeout(
-        getAvailableSlots(args),
+        getSimplyBookSlots(args),
         1800,
-        "Google Calendar non ha risposto in tempo."
+        "SimplyBook non ha risposto in tempo."
       );
       const alternatives = slots.slice(0, 2).map(slimSlot).filter(Boolean);
       return {
-        calendarAvailable: true,
+        bookingSystemAvailable: true,
         alternatives,
         firstAvailable: alternatives[0] || null,
         message: alternatives.length
@@ -339,7 +339,7 @@ export async function runTool(name, args, context = {}) {
       };
     } catch (error) {
       saveLead({
-        type: "calendar_unavailable",
+        type: "simplybook_unavailable",
         requestedDate: args.preferredDate,
         requestedStartTime: args.requestedStartTime,
         localDate: args.localDate,
@@ -348,7 +348,7 @@ export async function runTool(name, args, context = {}) {
       });
       notifySeller({
         body: [
-          "Calendario Expocar lento/non disponibile",
+          "SimplyBook Expocar lento/non disponibile",
           "Marco deve raccogliere la preferenza e far confermare da un consulente.",
           args.localDate || args.localTime ? `Richiesta: ${[args.localDate, args.localTime].filter(Boolean).join(" ")}` : "",
           args.requestedStartTime ? `Orario richiesto: ${args.requestedStartTime}` : "",
@@ -357,8 +357,8 @@ export async function runTool(name, args, context = {}) {
       }).catch(() => {});
       return {
         slots: [],
-        calendarAvailable: false,
-        message: "Calendario momentaneamente lento. Raccogli nome, telefono, giorno e ora preferiti; spiega in modo naturale che lo fai verificare in sede."
+        bookingSystemAvailable: false,
+        message: "Sistema prenotazioni momentaneamente lento. Raccogli nome, telefono, giorno e ora preferiti; spiega in modo naturale che lo fai verificare in sede."
       };
     }
   }
@@ -367,17 +367,20 @@ export async function runTool(name, args, context = {}) {
     let appointment;
     try {
       appointment = await withTimeout(
-        createAppointment(args),
+        createSimplyBookBooking({
+          ...args,
+          phone: args.phone || context.from,
+          callSid: context.callSid
+        }),
         2800,
-        "Google Calendar non ha creato l'appuntamento in tempo."
+        "SimplyBook non ha creato l'appuntamento in tempo."
       );
     } catch (error) {
-      const customerWhatsappTo = normalizeWhatsappNumber(args.whatsappTo || args.phone);
+      const customerPhone = args.phone || context.from;
       saveLead({
         type: "appointment_pending_confirmation",
         name: args.name,
-        phone: args.phone,
-        whatsappTo: customerWhatsappTo,
+        phone: customerPhone,
         interest: args.interest,
         startTime: args.startTime,
         localDate: args.localDate,
@@ -389,8 +392,7 @@ export async function runTool(name, args, context = {}) {
         body: [
           "Appuntamento da confermare manualmente",
           `Cliente: ${args.name || "non indicato"}`,
-          `Telefono: ${args.phone || "non indicato"}`,
-          `WhatsApp cliente: ${customerWhatsappTo || "non disponibile"}`,
+          `Telefono: ${customerPhone || "non indicato"}`,
           `Interesse: ${args.interest || "non indicato"}`,
           args.localDate || args.localTime ? `Richiesta: ${[args.localDate, args.localTime].filter(Boolean).join(" ")}` : "",
           args.startTime ? `Orario: ${args.startTime}` : "",
@@ -401,48 +403,30 @@ export async function runTool(name, args, context = {}) {
       return {
         appointment: null,
         pendingConfirmation: true,
-        customerWhatsappSentTo: customerWhatsappTo || null,
-        message: "Calendario momentaneamente lento. Non confermare come definitivo: prendi nota e di' che lo fai verificare in sede."
+        message: "Sistema prenotazioni momentaneamente lento. Non confermare come definitivo: prendi nota e di' che lo fai verificare in sede."
       };
     }
     const appointmentStart = appointment.start || args.startTime;
     const customerPhone = args.phone || context.from;
-    const customerWhatsappTo = normalizeWhatsappNumber(args.whatsappTo || customerPhone);
     saveLead({
       type: "appointment",
       name: args.name,
       phone: customerPhone,
-      whatsappTo: customerWhatsappTo,
       interest: args.interest,
       startTime: appointmentStart,
       notes: args.notes,
       appointment
     });
     try {
-      await sendAppointmentWhatsapp({
-        to: customerWhatsappTo,
-        name: args.name,
-        startTime: appointmentStart
-      });
-    } catch (error) {
-      saveLead({
-        type: "whatsapp_customer_failed",
-        phone: customerPhone,
-        whatsappTo: customerWhatsappTo,
-        error: error.message
-      });
-    }
-    try {
       await notifySeller({
         body: [
           "Nuovo appuntamento Expocar",
           `Cliente: ${args.name}`,
           `Telefono: ${customerPhone}`,
-          `WhatsApp cliente: ${customerWhatsappTo || "non disponibile"}`,
           `Interesse: ${args.interest}`,
           `Orario: ${formatRomeDate(appointmentStart)}`,
           args.notes ? `Note/richieste: ${args.notes}` : "",
-          appointment.htmlLink ? `Calendario: ${appointment.htmlLink}` : ""
+          appointment.id ? `Prenotazione SimplyBook: ${appointment.id}` : ""
         ].filter(Boolean).join("\n")
       });
     } catch (error) {
@@ -457,9 +441,8 @@ export async function runTool(name, args, context = {}) {
         start: appointmentStart,
         label: formatRomeDate(appointmentStart)
       },
-      customerWhatsappSentTo: customerWhatsappTo || null,
       sellerNotified: true,
-      message: `Appuntamento confermato per ${formatRomeDate(appointmentStart)}.`
+      message: `Appuntamento confermato per ${formatRomeDate(appointmentStart)}. SimplyBook gestira conferma, SMS e sincronizzazione calendario.`
     };
   }
 

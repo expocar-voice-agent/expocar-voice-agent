@@ -41,6 +41,16 @@ export const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN || "",
     chatId: process.env.TELEGRAM_CHAT_ID || ""
   },
+  simplybook: {
+    apiUrl: process.env.SIMPLYBOOK_API_URL || "https://user-api.simplybook.it/",
+    loginUrl: process.env.SIMPLYBOOK_LOGIN_URL || "https://user-api.simplybook.it/login/",
+    companyLogin: process.env.SIMPLYBOOK_COMPANY_LOGIN || "",
+    apiKey: process.env.SIMPLYBOOK_API_KEY || "",
+    apiSecret: process.env.SIMPLYBOOK_API_SECRET || "",
+    serviceId: process.env.SIMPLYBOOK_SERVICE_ID || "2",
+    unitId: process.env.SIMPLYBOOK_UNIT_ID || "",
+    defaultClientEmail: process.env.SIMPLYBOOK_DEFAULT_CLIENT_EMAIL || ""
+  },
   multigestionale: {
     userApi: required("MULTIGESTIONALE_USER_API"),
     engine: process.env.MULTIGESTIONALE_ENGINE || "car"

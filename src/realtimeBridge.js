@@ -222,7 +222,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
     type: "response.create",
     response: {
       output_modalities: ["audio"],
-      instructions: "Rispondi subito in modo naturale, con una frase breve. Se calendario o strumenti sono lenti, non restare in silenzio: raccogli nome, telefono e orario preferito, e di' che lo fai verificare in sede."
+      instructions: "Rispondi subito in modo naturale, con una frase breve. Se il sistema prenotazioni o gli strumenti sono lenti, non restare in silenzio: raccogli nome, telefono e orario preferito, e di' che lo fai verificare in sede."
     }
   }));
 }
@@ -304,6 +304,11 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let waitingForCustomer = false;
   let lastAssistantAudioAt = Date.now();
   let silenceTimer;
+  let initialGreetingInProgress = false;
+  let initialGreetingDone = false;
+  let initialGreetingRepeated = false;
+  let initialGreetingTimer;
+  let initialGreetingBlockedUntil = 0;
   const session = {
     startedAt: Date.now(),
     callSid: "",
@@ -331,6 +336,50 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         instructions
       }
     }));
+  }
+
+  function initialGreetingText() {
+    return `${greetingForRome()}, Expocar Italia sono Marco. In cosa posso esserle utile?`;
+  }
+
+  function customerHasSpoken() {
+    return session.transcript.some((piece) => piece.speaker === "Cliente");
+  }
+
+  function sendInitialGreeting({ repeat = false } = {}) {
+    if (openaiWs.readyState !== WebSocket.OPEN || responseInProgress) return;
+    if (!repeat && Date.now() < initialGreetingBlockedUntil) {
+      scheduleInitialGreeting(initialGreetingBlockedUntil - Date.now() + 350);
+      return;
+    }
+    initialGreetingInProgress = true;
+    if (repeat) initialGreetingRepeated = true;
+    openaiWs.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        output_modalities: ["audio"],
+        instructions: `Di esattamente, senza aggiungere altro e senza fermarti: ${initialGreetingText()}`
+      }
+    }));
+  }
+
+  function scheduleInitialGreeting(delayMs = 900) {
+    clearTimeout(initialGreetingTimer);
+    if (initialGreetingDone || customerHasSpoken()) return;
+    initialGreetingTimer = setTimeout(() => {
+      if (openaiWs.readyState !== WebSocket.OPEN || initialGreetingDone || responseInProgress || customerHasSpoken()) return;
+      sendInitialGreeting();
+    }, delayMs);
+  }
+
+  function scheduleInitialGreetingRepeat() {
+    clearTimeout(initialGreetingTimer);
+    if (!initialGreetingDone || initialGreetingRepeated || customerHasSpoken()) return;
+    initialGreetingTimer = setTimeout(() => {
+      if (customerHasSpoken() || responseInProgress || openaiWs.readyState !== WebSocket.OPEN) return;
+      logEvent("initial_greeting_repeated", { callSid: session.callSid });
+      sendInitialGreeting({ repeat: true });
+    }, 5000);
   }
 
   function resetSilenceTimer() {
@@ -372,9 +421,9 @@ export function bridgeTwilioToOpenAI(twilioWs) {
             },
             turn_detection: {
               type: "server_vad",
-              threshold: 0.62,
-              prefix_padding_ms: 250,
-              silence_duration_ms: 550,
+              threshold: 0.6,
+              prefix_padding_ms: 220,
+              silence_duration_ms: 430,
               interrupt_response: true
             }
           },
@@ -389,16 +438,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
     }));
 
-    setTimeout(() => {
-      if (openaiWs.readyState !== WebSocket.OPEN || session.transcript.length) return;
-      openaiWs.send(JSON.stringify({
-        type: "response.create",
-        response: {
-          output_modalities: ["audio"],
-          instructions: `Se non senti una voce automatica di portali come Subito, AutoScout24 o AutoSuperMarket, saluta in modo naturale, come una persona al telefono: ${greetingForRome()}, Expocar Italia sono Marco. Mi dica pure. Se invece senti o hai appena sentito un messaggio automatico del portale, resta in silenzio e aspetta il cliente reale.`
-        }
-      }));
-    }, 1800);
+    scheduleInitialGreeting(900);
   });
 
   twilioWs.on("message", (raw) => {
@@ -469,6 +509,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       || event.type === "input_audio_buffer.transcription.completed"
     ) {
       appendTranscript(session, "Cliente", extractTranscript(event));
+      clearTimeout(initialGreetingTimer);
       return;
     }
 
@@ -484,6 +525,16 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (event.type === "input_audio_buffer.speech_started") {
       logEvent("openai_speech_started", { responseInProgress });
       waitingForCustomer = false;
+      if (!initialGreetingDone && !initialGreetingInProgress) {
+        initialGreetingBlockedUntil = Date.now() + 1300;
+        scheduleInitialGreeting(1650);
+        logEvent("initial_greeting_delayed_for_inbound_audio", { callSid: session.callSid });
+        return;
+      }
+      if (initialGreetingInProgress) {
+        logEvent("initial_greeting_interrupt_ignored", { callSid: session.callSid });
+        return;
+      }
       if (responseInProgress && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(JSON.stringify({ type: "response.cancel" }));
       }
@@ -493,6 +544,12 @@ export function bridgeTwilioToOpenAI(twilioWs) {
           streamSid
         }));
       }
+      return;
+    }
+
+    if (event.type === "input_audio_buffer.speech_stopped" && !initialGreetingDone && !initialGreetingInProgress) {
+      initialGreetingBlockedUntil = Date.now() + 450;
+      scheduleInitialGreeting(700);
       return;
     }
 
@@ -518,6 +575,11 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "response.done") {
       responseInProgress = false;
+      if (initialGreetingInProgress) {
+        initialGreetingInProgress = false;
+        initialGreetingDone = true;
+        scheduleInitialGreetingRepeat();
+      }
       waitingForCustomer = true;
       resetSilenceTimer();
       logEvent("openai_response_done", {
@@ -560,11 +622,13 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
   twilioWs.on("close", () => {
     clearTimeout(silenceTimer);
+    clearTimeout(initialGreetingTimer);
     sendFinalCallSummary(session);
     openaiWs.close();
   });
   openaiWs.on("close", () => {
     clearTimeout(silenceTimer);
+    clearTimeout(initialGreetingTimer);
     twilioWs.close();
   });
 }

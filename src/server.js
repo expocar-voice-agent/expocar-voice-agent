@@ -10,6 +10,7 @@ import { config } from "./config.js";
 import { acceptOpenAISipCall, bridgeTwilioToOpenAI, monitorOpenAISipCall } from "./realtimeBridge.js";
 import { searchInventory } from "./inventory.js";
 import { getAvailableSlots } from "./calendar.js";
+import { getSimplyBookServices, getSimplyBookSlots, getSimplyBookUnits, simplyBookConfigured } from "./simplybook.js";
 import { readRecentLeads } from "./leads.js";
 import { notifySeller, sendAppointmentWhatsapp, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
@@ -150,6 +151,12 @@ app.get("/admin/status", requireAdmin, async (_req, res) => {
       whatsappConfigured: Boolean(config.twilio.whatsappFrom)
     },
     inventory: { configured: Boolean(config.multigestionale.userApi) },
+    simplybook: {
+      configured: simplyBookConfigured(),
+      companyLogin: config.simplybook.companyLogin,
+      serviceId: config.simplybook.serviceId,
+      unitIdConfigured: Boolean(config.simplybook.unitId)
+    },
     googleCalendar: {
       mode: config.google.authMode,
       calendarId: config.google.calendarId,
@@ -500,8 +507,8 @@ app.get("/admin/self-test", requireAdmin, async (_req, res) => {
     return `${cars.length} risultati`;
   }));
 
-  results.push(await runCheck("calendar", async () => {
-    const slots = await getAvailableSlots();
+  results.push(await runCheck("simplybook", async () => {
+    const slots = await getSimplyBookSlots();
     return `${slots.length} slot`;
   }));
 
@@ -760,10 +767,39 @@ app.get("/inventory/test", async (req, res, next) => {
 
 app.get("/calendar/slots", async (req, res, next) => {
   try {
-    const slots = await getAvailableSlots({ preferredDate: req.query.date });
+    const slots = simplyBookConfigured()
+      ? await getSimplyBookSlots({ preferredDate: req.query.date })
+      : await getAvailableSlots({ preferredDate: req.query.date });
     res.json({ slots });
   } catch (error) {
     next(error);
+  }
+});
+
+app.get("/admin/simplybook/services", requireAdmin, async (_req, res) => {
+  try {
+    const services = await getSimplyBookServices();
+    res.json({ ok: true, services });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message, code: error.code });
+  }
+});
+
+app.get("/admin/simplybook/units", requireAdmin, async (_req, res) => {
+  try {
+    const units = await getSimplyBookUnits();
+    res.json({ ok: true, units });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message, code: error.code });
+  }
+});
+
+app.get("/admin/simplybook/slots", requireAdmin, async (req, res) => {
+  try {
+    const slots = await getSimplyBookSlots({ preferredDate: req.query.date });
+    res.json({ ok: true, slots });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message, code: error.code });
   }
 });
 
