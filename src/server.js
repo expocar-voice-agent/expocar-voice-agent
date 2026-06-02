@@ -12,7 +12,7 @@ import { searchInventory } from "./inventory.js";
 import { getAvailableSlots } from "./calendar.js";
 import { getSimplyBookServices, getSimplyBookSlots, getSimplyBookUnits, simplyBookConfigured } from "./simplybook.js";
 import { readRecentLeads } from "./leads.js";
-import { notifySeller, sendAppointmentWhatsapp, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
+import { notifySeller } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
 import { getTelegramUpdates, notifySellerTelegram } from "./telegram.js";
@@ -221,72 +221,19 @@ app.get("/admin/test-whatsapp", requireAdmin, async (req, res) => {
 });
 
 app.get("/admin/test-customer-whatsapp", requireAdmin, async (req, res) => {
-  try {
-    const to = req.query.to;
-    if (!to) {
-      res.status(400).json({ ok: false, error: "missing to query parameter, example: ?to=+393711938885" });
-      return;
-    }
-
-    const message = await sendCustomerAfterCallWhatsapp({ to });
-    res.json({
-      ok: !message.skipped,
-      skipped: Boolean(message.skipped),
-      to,
-      sid: message.sid || null
-    });
-  } catch (error) {
-    logEvent("admin_test_customer_whatsapp_failed", {
-      to: req.query.to,
-      error: error.message,
-      code: error.code,
-      status: error.status
-    });
-    res.status(500).json({
-      ok: false,
-      to: req.query.to,
-      error: error.message,
-      code: error.code,
-      status: error.status
-    });
-  }
+  res.json({
+    ok: true,
+    disabled: true,
+    message: "WhatsApp cliente disattivato: conferme e promemoria sono gestiti da SimplyBook."
+  });
 });
 
 app.get("/admin/test-appointment-whatsapp", requireAdmin, async (req, res) => {
-  try {
-    const to = req.query.to;
-    if (!to) {
-      res.status(400).json({ ok: false, error: "missing to query parameter, example: ?to=+393711938885" });
-      return;
-    }
-
-    const startTime = req.query.startTime || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    const message = await sendAppointmentWhatsapp({
-      to,
-      name: req.query.name || "cliente",
-      startTime
-    });
-    res.json({
-      ok: !message.skipped,
-      skipped: Boolean(message.skipped),
-      to,
-      sid: message.sid || null
-    });
-  } catch (error) {
-    logEvent("admin_test_appointment_whatsapp_failed", {
-      to: req.query.to,
-      error: error.message,
-      code: error.code,
-      status: error.status
-    });
-    res.status(500).json({
-      ok: false,
-      to: req.query.to,
-      error: error.message,
-      code: error.code,
-      status: error.status
-    });
-  }
+  res.json({
+    ok: true,
+    disabled: true,
+    message: "WhatsApp appuntamento disattivato: conferme e promemoria sono gestiti da SimplyBook."
+  });
 });
 
 app.get("/admin/test-alert", requireAdmin, async (req, res) => {

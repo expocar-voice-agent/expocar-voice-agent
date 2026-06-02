@@ -83,6 +83,11 @@ function normalizeTime(value) {
   return `${match[1].padStart(2, "0")}:${match[2]}:${match[3] || "00"}`;
 }
 
+function normalizeEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
+}
+
 function appointmentParts(args = {}) {
   if (args.localDate && args.localTime) {
     return {
@@ -317,7 +322,7 @@ export async function createSimplyBookBooking(args = {}) {
   const clientData = {
     name: args.name || "Cliente Expocar",
     phone: args.phone || "",
-    email: args.email || config.simplybook.defaultClientEmail || ""
+    email: normalizeEmail(args.email) || normalizeEmail(config.simplybook.defaultClientEmail) || "expocaritalia@gmail.com"
   };
   const additional = {
     note: [

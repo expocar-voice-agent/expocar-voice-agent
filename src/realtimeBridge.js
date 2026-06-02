@@ -4,7 +4,7 @@ import { agentInstructions } from "./agentPrompt.js";
 import { logEvent } from "./logger.js";
 import { realtimeTools, runTool } from "./tools.js";
 import { saveLead } from "./leads.js";
-import { notifySeller, sendCustomerAfterCallWhatsapp } from "./whatsapp.js";
+import { notifySeller } from "./whatsapp.js";
 import { alertSeller } from "./alerts.js";
 
 function safeJsonParse(value, fallback = {}) {
@@ -150,28 +150,11 @@ async function sendFinalCallSummary(session) {
       error: error.message
     });
   }
-
-  try {
-    const customerMessage = await sendCustomerAfterCallWhatsapp({ to: session.from });
-    logEvent("call_customer_after_call_whatsapp_result", {
-      callSid: session.callSid,
-      from: session.from,
-      skipped: Boolean(customerMessage.skipped),
-      sid: customerMessage.sid || null
-    });
-  } catch (error) {
-    saveLead({
-      type: "customer_after_call_whatsapp_failed",
-      callSid: session.callSid,
-      from: session.from,
-      error: error.message
-    });
-    logEvent("customer_after_call_whatsapp_failed", {
-      callSid: session.callSid,
-      from: session.from,
-      error: error.message
-    });
-  }
+  logEvent("customer_after_call_whatsapp_disabled", {
+    callSid: session.callSid,
+    from: session.from,
+    reason: "customer_messages_managed_by_simplybook"
+  });
 }
 
 async function handleRealtimeToolCall(event, openaiWs, session) {
@@ -309,6 +292,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let initialGreetingRepeated = false;
   let initialGreetingTimer;
   let initialGreetingBlockedUntil = 0;
+  let initialCustomerAudioHeard = false;
   const session = {
     startedAt: Date.now(),
     callSid: "",
@@ -343,7 +327,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   function customerHasSpoken() {
-    return session.transcript.some((piece) => piece.speaker === "Cliente");
+    return initialCustomerAudioHeard || session.transcript.some((piece) => piece.speaker === "Cliente");
   }
 
   function sendInitialGreeting({ repeat = false } = {}) {
@@ -532,6 +516,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         return;
       }
       if (initialGreetingInProgress) {
+        initialCustomerAudioHeard = true;
+        clearTimeout(initialGreetingTimer);
         logEvent("initial_greeting_interrupt_ignored", { callSid: session.callSid });
         return;
       }

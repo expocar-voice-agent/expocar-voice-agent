@@ -49,7 +49,7 @@ export const config = {
     apiSecret: process.env.SIMPLYBOOK_API_SECRET || "",
     serviceId: process.env.SIMPLYBOOK_SERVICE_ID || "2",
     unitId: process.env.SIMPLYBOOK_UNIT_ID || "",
-    defaultClientEmail: process.env.SIMPLYBOOK_DEFAULT_CLIENT_EMAIL || ""
+    defaultClientEmail: process.env.SIMPLYBOOK_DEFAULT_CLIENT_EMAIL || "expocaritalia@gmail.com"
   },
   multigestionale: {
     userApi: required("MULTIGESTIONALE_USER_API"),

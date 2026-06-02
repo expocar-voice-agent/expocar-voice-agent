@@ -216,6 +216,7 @@ export const realtimeTools = [
         name: { type: "string" },
         phone: { type: "string" },
         whatsappTo: { type: "string", description: "Numero WhatsApp cliente in formato whatsapp:+39..." },
+        email: { type: "string", description: "Email cliente se disponibile; se il cliente non vuole darla lascia vuoto." },
         interest: { type: "string" },
         startTime: { type: "string", description: "Orario richiesto dal cliente. Interpreta sempre come orario locale italiano, non UTC." },
         localDate: { type: "string", description: "Data locale dell'appuntamento in Italia, formato YYYY-MM-DD." },
