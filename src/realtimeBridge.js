@@ -319,7 +319,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
     type: "response.create",
     response: {
       output_modalities: [elevenLabsConfigured() ? "text" : "audio"],
-      instructions: "Rispondi subito in modo naturale, con una frase breve. Se il sistema prenotazioni o gli strumenti sono lenti, non restare in silenzio: raccogli nome, telefono e orario preferito, e di' che lo fai verificare in sede."
+      instructions: "Rispondi subito in italiano, in modo naturale, con una frase breve. Non usare spagnolo, inglese o altre lingue. Se il sistema prenotazioni o gli strumenti sono lenti, non restare in silenzio: raccogli nome, telefono e orario preferito, e di' che lo fai verificare in sede."
     }
   }));
 }

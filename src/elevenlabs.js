@@ -28,6 +28,15 @@ function compactNumber(value) {
 export function prepareTextForTelephoneTts(text) {
   let output = String(text || "")
     .replace(/\s+/g, " ")
+    .replace(/\bcoches\b/gi, "auto")
+    .replace(/\bcoche\b/gi, "auto")
+    .replace(/\bdisponibles\b/gi, "disponibili")
+    .replace(/\bprecio\b/gi, "prezzo")
+    .replace(/\bkilometraje\b/gi, "chilometraggio")
+    .replace(/\bkilometros\b/gi, "chilometri")
+    .replace(/\bgracias\b/gi, "grazie")
+    .replace(/\bvale\b/gi, "va bene")
+    .replace(/\bperfecto\b/gi, "va bene")
     .replace(/[€]/g, " euro ")
     .replace(/\b(\d{1,3})[.](\d{3})\b/g, "$1$2")
     .trim();
