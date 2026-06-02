@@ -26,6 +26,18 @@ export const config = {
     speed: optionalNumber("OPENAI_REALTIME_SPEED", 1.2),
     summaryModel: process.env.OPENAI_SUMMARY_MODEL || "gpt-4o-mini"
   },
+  elevenlabs: {
+    enabled: process.env.ELEVENLABS_ENABLED === "true",
+    apiKey: process.env.ELEVENLABS_API_KEY || "",
+    voiceId: process.env.ELEVENLABS_VOICE_ID || "",
+    modelId: process.env.ELEVENLABS_MODEL_ID || "eleven_flash_v2_5",
+    outputFormat: process.env.ELEVENLABS_OUTPUT_FORMAT || "ulaw_8000",
+    optimizeLatency: optionalNumber("ELEVENLABS_OPTIMIZE_LATENCY", 3),
+    stability: optionalNumber("ELEVENLABS_STABILITY", 0.45),
+    similarityBoost: optionalNumber("ELEVENLABS_SIMILARITY_BOOST", 0.8),
+    style: optionalNumber("ELEVENLABS_STYLE", 0.15),
+    useSpeakerBoost: process.env.ELEVENLABS_USE_SPEAKER_BOOST !== "false"
+  },
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID || "",
     authToken: process.env.TWILIO_AUTH_TOKEN || "",

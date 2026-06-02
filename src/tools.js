@@ -217,7 +217,7 @@ export const realtimeTools = [
         phone: { type: "string" },
         whatsappTo: { type: "string", description: "Numero WhatsApp cliente in formato whatsapp:+39..." },
         email: { type: "string", description: "Email cliente se disponibile; se il cliente non vuole darla lascia vuoto." },
-        emailAsked: { type: "boolean", description: "True solo se Marco ha chiesto esplicitamente l'email al cliente." },
+        emailAsked: { type: "boolean", description: "True solo se Giusy ha chiesto esplicitamente l'email al cliente." },
         emailUnavailable: { type: "boolean", description: "True se il cliente ha detto di non avere email o di non volerla comunicare." },
         interest: { type: "string" },
         startTime: { type: "string", description: "Orario richiesto dal cliente. Interpreta sempre come orario locale italiano, non UTC." },
@@ -361,7 +361,7 @@ export async function runTool(name, args, context = {}) {
       notifySeller({
         body: [
           "SimplyBook Expocar lento/non disponibile",
-          "Marco deve raccogliere la preferenza e far confermare da un consulente.",
+          "Giusy deve raccogliere la preferenza e far confermare da un consulente.",
           args.localDate || args.localTime ? `Richiesta: ${[args.localDate, args.localTime].filter(Boolean).join(" ")}` : "",
           args.requestedStartTime ? `Orario richiesto: ${args.requestedStartTime}` : "",
           `Errore: ${error.message}`

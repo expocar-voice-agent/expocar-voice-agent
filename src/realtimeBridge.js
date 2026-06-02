@@ -6,6 +6,7 @@ import { realtimeTools, runTool } from "./tools.js";
 import { saveLead } from "./leads.js";
 import { notifySeller } from "./whatsapp.js";
 import { alertSeller } from "./alerts.js";
+import { elevenLabsConfigured, streamElevenLabsUlaw } from "./elevenlabs.js";
 
 function safeJsonParse(value, fallback = {}) {
   try {
@@ -42,7 +43,7 @@ function extractName(text) {
   const match = clean.match(/\b(?:mi chiamo|sono|nome\s+e|il nome e|nome)\s+([a-z']{3,}(?:\s+[a-z']{3,})?)/i);
   if (!match) return "";
   const name = match[1].trim();
-  return /marco|expocar|buongiorno|pomeriggio|buonasera/i.test(name) ? "" : name;
+  return /giusy|marco|expocar|buongiorno|pomeriggio|buonasera/i.test(name) ? "" : name;
 }
 
 function updateLeadFacts(session, speaker, text) {
@@ -289,7 +290,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
   openaiWs.send(JSON.stringify({
     type: "response.create",
     response: {
-      output_modalities: ["audio"],
+      output_modalities: [elevenLabsConfigured() ? "text" : "audio"],
       instructions: "Rispondi subito in modo naturale, con una frase breve. Se il sistema prenotazioni o gli strumenti sono lenti, non restare in silenzio: raccogli nome, telefono e orario preferito, e di' che lo fai verificare in sede."
     }
   }));
@@ -339,7 +340,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: `Di esattamente: ${greetingForRome()}, Expocar Italia sono Marco. In cosa posso esserle utile?`
+        instructions: `Di esattamente: ${greetingForRome()}, Expocar Italia sono Giusy. In cosa posso esserle utile?`
       }
     }));
   });
@@ -378,6 +379,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let initialGreetingTimer;
   let initialGreetingBlockedUntil = 0;
   let initialCustomerAudioHeard = false;
+  let assistantTextBuffer = "";
+  const useElevenLabs = elevenLabsConfigured();
   const session = {
     startedAt: Date.now(),
     callSid: "",
@@ -401,14 +404,43 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        output_modalities: ["audio"],
+        output_modalities: [useElevenLabs ? "text" : "audio"],
         instructions
       }
     }));
   }
 
+  async function sendElevenLabsAudio(text) {
+    if (!useElevenLabs || !streamSid || !text.trim()) return false;
+    try {
+      const result = await streamElevenLabsUlaw(text, async (audio) => {
+        if (twilioWs.readyState !== WebSocket.OPEN) return;
+        lastAssistantAudioAt = Date.now();
+        twilioWs.send(JSON.stringify({
+          event: "media",
+          streamSid,
+          media: { payload: audio.toString("base64") }
+        }));
+      });
+      if (result.skipped) return false;
+      return true;
+    } catch (error) {
+      logEvent("elevenlabs_tts_failed", {
+        callSid: session.callSid,
+        from: session.from,
+        message: error.message
+      });
+      alertSeller("elevenlabs_tts_failed", {
+        message: error.message,
+        callSid: session.callSid,
+        from: session.from
+      });
+      return false;
+    }
+  }
+
   function initialGreetingText() {
-    return `${greetingForRome()}, Expocar Italia sono Marco. In cosa posso esserle utile?`;
+    return `${greetingForRome()}, Expocar Italia sono Giusy. In cosa posso esserle utile?`;
   }
 
   function customerHasSpoken() {
@@ -426,7 +458,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        output_modalities: ["audio"],
+        output_modalities: [useElevenLabs ? "text" : "audio"],
         instructions: `Di esattamente, senza aggiungere altro e senza fermarti: ${initialGreetingText()}`
       }
     }));
@@ -479,7 +511,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         type: "realtime",
         model: config.openai.realtimeModel,
         instructions: agentInstructions,
-        output_modalities: ["audio"],
+        output_modalities: [useElevenLabs ? "text" : "audio"],
         audio: {
           input: {
             format: { type: "audio/pcmu" },
@@ -496,11 +528,13 @@ export function bridgeTwilioToOpenAI(twilioWs) {
               interrupt_response: true
             }
           },
-          output: {
-            format: { type: "audio/pcmu" },
-            voice: config.openai.voice,
-            speed: config.openai.speed
-          }
+          ...(useElevenLabs ? {} : {
+            output: {
+              format: { type: "audio/pcmu" },
+              voice: config.openai.voice,
+              speed: config.openai.speed
+            }
+          })
         },
         tools: realtimeTools,
         tool_choice: "auto"
@@ -570,6 +604,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (event.type === "response.created") {
       responseInProgress = true;
       waitingForCustomer = false;
+      assistantTextBuffer = "";
       resetSilenceTimer();
     }
 
@@ -588,7 +623,23 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       || event.type === "response.output_item.done"
     ) {
       const transcript = extractTranscript(event);
-      if (transcript) appendTranscript(session, "Marco", transcript);
+      if (transcript) {
+        if (useElevenLabs) {
+          assistantTextBuffer = assistantTextBuffer || transcript;
+        } else {
+          appendTranscript(session, "Giusy", transcript);
+        }
+      }
+    }
+
+    if (event.type === "response.output_text.delta" || event.type === "response.text.delta") {
+      assistantTextBuffer += event.delta || "";
+      return;
+    }
+
+    if (event.type === "response.output_text.done" || event.type === "response.text.done") {
+      assistantTextBuffer = event.text || assistantTextBuffer;
+      return;
     }
 
     if (event.type === "input_audio_buffer.speech_started") {
@@ -649,6 +700,14 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
 
     if (event.type === "response.done") {
+      if (useElevenLabs && !assistantTextBuffer.trim()) {
+        assistantTextBuffer = extractTranscript(event);
+      }
+      if (useElevenLabs && assistantTextBuffer.trim()) {
+        const spokenText = assistantTextBuffer.trim();
+        appendTranscript(session, "Giusy", spokenText);
+        await sendElevenLabsAudio(spokenText);
+      }
       responseInProgress = false;
       if (initialGreetingInProgress) {
         initialGreetingInProgress = false;

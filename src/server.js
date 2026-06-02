@@ -16,6 +16,7 @@ import { notifySeller } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
 import { getTelegramUpdates, notifySellerTelegram } from "./telegram.js";
+import { elevenLabsConfigured, synthesizeElevenLabsUlaw } from "./elevenlabs.js";
 
 const app = express();
 const recordingCalls = new Map();
@@ -140,6 +141,13 @@ app.get("/admin/status", requireAdmin, async (_req, res) => {
       sipUriConfigured: Boolean(sipUri),
       webhookSecretConfigured: Boolean(config.openai.webhookSecret)
     },
+    elevenlabs: {
+      enabled: config.elevenlabs.enabled,
+      configured: Boolean(config.elevenlabs.apiKey && config.elevenlabs.voiceId),
+      voiceId: config.elevenlabs.voiceId,
+      modelId: config.elevenlabs.modelId,
+      outputFormat: config.elevenlabs.outputFormat
+    },
     didww: {
       publicPhone: config.business.publicPhone,
       sipUri,
@@ -261,6 +269,32 @@ app.get("/admin/test-telegram", requireAdmin, async (_req, res) => {
     });
   } catch (error) {
     logEvent("admin_test_telegram_failed", { error: error.message });
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/admin/test-elevenlabs", requireAdmin, async (req, res) => {
+  try {
+    if (!elevenLabsConfigured()) {
+      res.json({
+        ok: false,
+        configured: false,
+        message: "ElevenLabs non attivo o non configurato."
+      });
+      return;
+    }
+
+    const audio = await synthesizeElevenLabsUlaw(req.query.text || "Expocar Italia sono Giusy.");
+    res.json({
+      ok: Boolean(audio?.length),
+      configured: true,
+      bytes: audio?.length || 0,
+      voiceId: config.elevenlabs.voiceId,
+      modelId: config.elevenlabs.modelId,
+      outputFormat: config.elevenlabs.outputFormat
+    });
+  } catch (error) {
+    logEvent("admin_test_elevenlabs_failed", { error: error.message });
     res.status(500).json({ ok: false, error: error.message });
   }
 });
@@ -427,7 +461,7 @@ async function purchaseTwilioNumber({ phoneNumber, baseUrl = config.publicBaseUr
   const client = twilio(config.twilio.accountSid, config.twilio.authToken);
   const purchased = await client.incomingPhoneNumbers.create({
     phoneNumber,
-    friendlyName: "Expocar Marco",
+    friendlyName: "Expocar Giusy",
     voiceUrl: `${baseUrl}/twilio/voice`,
     voiceMethod: "POST",
     statusCallback: `${baseUrl}/twilio/status`,
@@ -892,7 +926,7 @@ app.post("/twilio/voice-greeting", (req, res) => {
   response.say({
     language: "it-IT",
     voice: "Polly.Giorgio"
-  }, `${greetingForRome()}, Expocar Italia sono Marco. In cosa posso esserle utile?`);
+  }, `${greetingForRome()}, Expocar Italia sono Giusy. In cosa posso esserle utile?`);
   response.pause({ length: 1 });
   response.say({
     language: "it-IT",
