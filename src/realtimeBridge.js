@@ -122,6 +122,10 @@ function greetingForRome() {
   return "Buonasera";
 }
 
+function greetingForSentence() {
+  return greetingForRome().toLowerCase();
+}
+
 function decodeMuLawSample(byte) {
   const value = ~byte & 0xff;
   const sign = value & 0x80 ? -1 : 1;
@@ -379,7 +383,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: `Di esattamente: Expocaritalia, ${greetingForRome()}, sono Giusy. Come posso aiutarla?`
+        instructions: `Di esattamente: Expocar Italia, ${greetingForSentence()}, sono Giusy. Come posso aiutarla?`
       }
     }));
   });
@@ -486,7 +490,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   function initialGreetingText() {
-    return `Expocaritalia, ${greetingForRome()}, sono Giusy. Come posso aiutarla?`;
+    return `Expocar Italia, ${greetingForSentence()}, sono Giusy. Come posso aiutarla?`;
   }
 
   function customerHasSpoken() {

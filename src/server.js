@@ -33,6 +33,10 @@ function greetingForRome() {
   return "Buonasera";
 }
 
+function greetingForSentence() {
+  return greetingForRome().toLowerCase();
+}
+
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -284,7 +288,7 @@ app.get("/admin/test-elevenlabs", requireAdmin, async (req, res) => {
       return;
     }
 
-    const audio = await synthesizeElevenLabsUlaw(req.query.text || `Expocaritalia, ${greetingForRome()}, sono Giusy. Come posso aiutarla?`);
+    const audio = await synthesizeElevenLabsUlaw(req.query.text || `Expocar Italia, ${greetingForSentence()}, sono Giusy. Come posso aiutarla?`);
     res.json({
       ok: Boolean(audio?.length),
       configured: true,
@@ -926,7 +930,7 @@ app.post("/twilio/voice-greeting", (req, res) => {
   response.say({
     language: "it-IT",
     voice: "Polly.Giorgio"
-  }, `Expocaritalia, ${greetingForRome()}, sono Giusy. Come posso aiutarla?`);
+  }, `Expocar Italia, ${greetingForSentence()}, sono Giusy. Come posso aiutarla?`);
   response.pause({ length: 1 });
   response.say({
     language: "it-IT",
