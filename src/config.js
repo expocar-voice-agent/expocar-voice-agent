@@ -33,10 +33,10 @@ export const config = {
     modelId: process.env.ELEVENLABS_MODEL_ID || "eleven_flash_v2_5",
     outputFormat: process.env.ELEVENLABS_OUTPUT_FORMAT || "ulaw_8000",
     optimizeLatency: optionalNumber("ELEVENLABS_OPTIMIZE_LATENCY", 3),
-    stability: optionalNumber("ELEVENLABS_STABILITY", 0.45),
-    similarityBoost: optionalNumber("ELEVENLABS_SIMILARITY_BOOST", 0.8),
-    style: optionalNumber("ELEVENLABS_STYLE", 0.15),
-    useSpeakerBoost: process.env.ELEVENLABS_USE_SPEAKER_BOOST !== "false"
+    stability: optionalNumber("ELEVENLABS_STABILITY", 0.68),
+    similarityBoost: optionalNumber("ELEVENLABS_SIMILARITY_BOOST", 0.75),
+    style: optionalNumber("ELEVENLABS_STYLE", 0),
+    useSpeakerBoost: process.env.ELEVENLABS_USE_SPEAKER_BOOST === "true"
   },
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID || "",
