@@ -211,12 +211,14 @@ export const realtimeTools = [
     description: "Crea appuntamento su SimplyBook.",
     parameters: {
       type: "object",
-      required: ["name", "phone", "interest", "startTime"],
+      required: ["name", "phone", "interest", "startTime", "emailAsked"],
       properties: {
         name: { type: "string" },
         phone: { type: "string" },
         whatsappTo: { type: "string", description: "Numero WhatsApp cliente in formato whatsapp:+39..." },
         email: { type: "string", description: "Email cliente se disponibile; se il cliente non vuole darla lascia vuoto." },
+        emailAsked: { type: "boolean", description: "True solo se Marco ha chiesto esplicitamente l'email al cliente." },
+        emailUnavailable: { type: "boolean", description: "True se il cliente ha detto di non avere email o di non volerla comunicare." },
         interest: { type: "string" },
         startTime: { type: "string", description: "Orario richiesto dal cliente. Interpreta sempre come orario locale italiano, non UTC." },
         localDate: { type: "string", description: "Data locale dell'appuntamento in Italia, formato YYYY-MM-DD." },
@@ -374,6 +376,20 @@ export async function runTool(name, args, context = {}) {
   }
 
   if (name === "crea_appuntamento") {
+    if (!args.emailAsked) {
+      return {
+        appointment: null,
+        missingEmailQuestion: true,
+        message: "Prima di creare l'appuntamento chiedi l'indirizzo email al cliente. Se non ce l'ha o non vuole comunicarlo, registralo e poi puoi procedere."
+      };
+    }
+    if (!args.email && !args.emailUnavailable) {
+      return {
+        appointment: null,
+        missingEmailAnswer: true,
+        message: "Hai chiesto l'email ma manca ancora la risposta. Chiedi se puo comunicarla; se non ce l'ha o preferisce non darla, procedi indicando emailUnavailable true."
+      };
+    }
     let appointment;
     try {
       appointment = await withTimeout(
