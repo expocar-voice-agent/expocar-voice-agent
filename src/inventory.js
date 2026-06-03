@@ -99,6 +99,22 @@ function matchesText(car, terms) {
   });
 }
 
+function fieldIncludes(value, term) {
+  const normalizedValue = normalizeText(value);
+  const normalizedTerm = normalizeText(term);
+  if (!normalizedTerm) return true;
+  return normalizedValue.includes(normalizedTerm) || compactText(normalizedValue).includes(compactText(normalizedTerm));
+}
+
+function carMatchesBrand(car, brand) {
+  return !brand || fieldIncludes(car.brand, brand);
+}
+
+function carMatchesModel(car, model) {
+  if (!model) return true;
+  return fieldIncludes(car.model, model) || fieldIncludes(car.raw?.title, model);
+}
+
 function scoreText(car, terms) {
   if (!terms.length) return 1;
   const haystack = normalizeText([
@@ -233,9 +249,9 @@ export async function fetchInventory() {
 }
 
 function filterInventory(cars, filters = {}) {
+  const brand = filters.brand;
+  const model = filters.model;
   const terms = [
-    filters.brand,
-    filters.model,
     filters.bodyType,
     filters.fuel,
     filters.gearbox,
@@ -247,10 +263,14 @@ function filterInventory(cars, filters = {}) {
   const minYear = toNumber(filters.minYear);
 
   const filtered = cars
+    .filter((car) => carMatchesBrand(car, brand))
+    .filter((car) => carMatchesModel(car, model))
     .filter((car) => matchesText(car, terms))
     .filter((car) => !maxBudget || !toNumber(car.price) || toNumber(car.price) <= maxBudget)
     .filter((car) => !maxMileage || !toNumber(car.mileage) || toNumber(car.mileage) <= maxMileage)
     .filter((car) => !minYear || !toNumber(car.year) || toNumber(car.year) >= minYear);
+
+  if (brand || model) return filtered;
 
   const relaxed = filtered.length ? filtered : cars
     .map((car) => ({ car, score: scoreText(car, terms) }))
