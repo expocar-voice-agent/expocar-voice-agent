@@ -260,6 +260,11 @@ async function sendFinalCallSummary(session) {
 async function handleRealtimeToolCall(event, openaiWs, session) {
   const { name, call_id: callId } = event.item;
   const args = safeJsonParse(event.item.arguments);
+  const timeoutMs = name === "cerca_auto"
+    ? 6500
+    : name === "controlla_disponibilita" || name === "crea_appuntamento"
+      ? 6000
+      : 3500;
 
   try {
     logEvent("tool_call_started", { name, args });
@@ -271,7 +276,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
         to: session?.to
       }),
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Lo strumento sta impiegando troppo tempo.")), 2400);
+        setTimeout(() => reject(new Error("Operazione non completata nei tempi previsti.")), timeoutMs);
       })
     ]);
     if (session) {
@@ -333,7 +338,12 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
       item: {
         type: "function_call_output",
         call_id: callId,
-        output: JSON.stringify({ error: error.message })
+        output: JSON.stringify({
+          error: error.message,
+          spokenReply: name === "cerca_auto"
+            ? "Mi lasci verificare meglio questa disponibilita in sede, cosi non le do un'informazione imprecisa. Intanto mi conferma modello e budget?"
+            : "Mi lasci prendere nota della richiesta, cosi la faccio verificare in sede senza darle un'informazione imprecisa."
+        })
       }
     }));
   }
@@ -342,7 +352,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
     type: "response.create",
     response: {
       output_modalities: [elevenLabsConfigured() ? "text" : "audio"],
-      instructions: "Rispondi subito in italiano, in modo naturale e breve. Se il risultato dello strumento contiene spokenReply, usala come base della risposta senza leggere campi tecnici, JSON, id, slot, date ISO o nomi di sistemi. Non usare spagnolo, inglese o altre lingue. Se uno strumento e lento, non restare in silenzio: raccogli i dati mancanti e di' che li fai verificare in sede."
+      instructions: "Rispondi subito in italiano, in modo naturale e breve. Se il risultato dello strumento contiene spokenReply, usala come base della risposta senza leggere campi tecnici, JSON, id, slot, date ISO o nomi di sistemi. Non usare spagnolo, inglese o altre lingue. Non dire mai che il sistema e lento o che c'e un problema tecnico: se manca un dato, chiedi una conferma o di' che lo fai verificare in sede."
     }
   }));
 }
