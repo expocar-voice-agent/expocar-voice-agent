@@ -434,6 +434,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let waitingForCustomer = false;
   let lastAssistantAudioAt = Date.now();
   let silenceTimer;
+  let bargeInTimer;
+  let customerSpeechActive = false;
   let initialGreetingInProgress = false;
   let initialGreetingDone = false;
   let initialGreetingRepeated = false;
@@ -753,6 +755,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (event.type === "input_audio_buffer.speech_started") {
       logEvent("openai_speech_started", { responseInProgress });
       waitingForCustomer = false;
+      customerSpeechActive = true;
       if (initialGreetingDone) {
         initialCustomerAudioHeard = true;
         clearTimeout(initialGreetingTimer);
@@ -776,15 +779,25 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         return;
       }
       if (responseInProgress && openaiWs.readyState === WebSocket.OPEN) {
-        openaiWs.send(JSON.stringify({ type: "response.cancel" }));
-      }
-      if (streamSid) {
-        twilioWs.send(JSON.stringify({
-          event: "clear",
-          streamSid
-        }));
+        clearTimeout(bargeInTimer);
+        bargeInTimer = setTimeout(() => {
+          if (!customerSpeechActive || !responseInProgress || openaiWs.readyState !== WebSocket.OPEN) return;
+          logEvent("barge_in_confirmed_after_sustained_speech", { callSid: session.callSid });
+          openaiWs.send(JSON.stringify({ type: "response.cancel" }));
+          if (streamSid) {
+            twilioWs.send(JSON.stringify({
+              event: "clear",
+              streamSid
+            }));
+          }
+        }, 3000);
       }
       return;
+    }
+
+    if (event.type === "input_audio_buffer.speech_stopped") {
+      customerSpeechActive = false;
+      clearTimeout(bargeInTimer);
     }
 
     if (event.type === "input_audio_buffer.speech_stopped" && !initialGreetingDone && !initialGreetingInProgress) {
@@ -884,12 +897,14 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   twilioWs.on("close", () => {
     clearTimeout(silenceTimer);
     clearTimeout(initialGreetingTimer);
+    clearTimeout(bargeInTimer);
     sendFinalCallSummary(session);
     openaiWs.close();
   });
   openaiWs.on("close", () => {
     clearTimeout(silenceTimer);
     clearTimeout(initialGreetingTimer);
+    clearTimeout(bargeInTimer);
     twilioWs.close();
   });
 }
