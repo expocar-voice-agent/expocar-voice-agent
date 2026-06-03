@@ -135,9 +135,13 @@ function decodeMuLawSample(byte) {
 }
 
 function payloadHasVoice(payload) {
-  if (!payload) return false;
+  return payloadVoiceEnergy(payload) > 900;
+}
+
+function payloadVoiceEnergy(payload) {
+  if (!payload) return 0;
   const audio = Buffer.from(payload, "base64");
-  if (audio.length < 80) return false;
+  if (audio.length < 80) return 0;
 
   let sum = 0;
   const step = Math.max(1, Math.floor(audio.length / 80));
@@ -147,7 +151,7 @@ function payloadHasVoice(payload) {
     count += 1;
   }
 
-  return count > 0 && sum / count > 900;
+  return count > 0 ? sum / count : 0;
 }
 
 function formatRomeDate(value) {
@@ -423,6 +427,9 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let initialGreetingBlockedUntil = 0;
   let initialCustomerAudioHeard = false;
   let initialGreetingCompletedAt = 0;
+  let lastInitialInboundVoiceAt = 0;
+  let initialAudioWaitLogged = false;
+  let initialInboundVoiceFrames = 0;
   let assistantTextBuffer = "";
   const useElevenLabs = elevenLabsConfigured();
   const session = {
@@ -499,6 +506,10 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
   function sendInitialGreeting({ repeat = false } = {}) {
     if (openaiWs.readyState !== WebSocket.OPEN || responseInProgress) return;
+    if (!repeat && !initialGreetingDone && lastInitialInboundVoiceAt && Date.now() - lastInitialInboundVoiceAt < 1800) {
+      scheduleInitialGreeting(1900);
+      return;
+    }
     if (!repeat && Date.now() < initialGreetingBlockedUntil) {
       scheduleInitialGreeting(initialGreetingBlockedUntil - Date.now() + 350);
       return;
@@ -591,7 +602,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
     }));
 
-    scheduleInitialGreeting(900);
+    scheduleInitialGreeting(1400);
   });
 
   twilioWs.on("message", (raw) => {
@@ -612,6 +623,27 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
 
     if (message.event === "media" && openaiWs.readyState === WebSocket.OPEN) {
+      if (!initialGreetingDone && !initialGreetingInProgress) {
+        const initialVoiceEnergy = payloadVoiceEnergy(message.media?.payload);
+        if (initialVoiceEnergy > 1500) {
+          initialInboundVoiceFrames += 1;
+        } else {
+          initialInboundVoiceFrames = Math.max(0, initialInboundVoiceFrames - 1);
+        }
+
+        if (initialInboundVoiceFrames >= 10) {
+          lastInitialInboundVoiceAt = Date.now();
+          initialGreetingBlockedUntil = Date.now() + 1900;
+          scheduleInitialGreeting(2100);
+          if (!initialAudioWaitLogged) {
+            initialAudioWaitLogged = true;
+            logEvent("initial_greeting_waiting_for_initial_clear_voice", {
+              callSid: session.callSid,
+              energy: Math.round(initialVoiceEnergy)
+            });
+          }
+        }
+      }
       if (
         initialGreetingDone
         && !initialGreetingRepeated
@@ -706,16 +738,22 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (event.type === "input_audio_buffer.speech_started") {
       logEvent("openai_speech_started", { responseInProgress });
       waitingForCustomer = false;
-      initialCustomerAudioHeard = true;
       if (initialGreetingDone) {
+        initialCustomerAudioHeard = true;
         clearTimeout(initialGreetingTimer);
       }
       if (!initialGreetingDone && !initialGreetingInProgress) {
-        initialCustomerAudioHeard = false;
-        initialGreetingBlockedUntil = Date.now() + 1300;
-        scheduleInitialGreeting(1650);
-        logEvent("initial_greeting_delayed_for_inbound_audio", { callSid: session.callSid });
-        return;
+        if (initialInboundVoiceFrames >= 6) {
+          initialCustomerAudioHeard = false;
+          lastInitialInboundVoiceAt = Date.now();
+          initialGreetingBlockedUntil = Date.now() + 1900;
+          scheduleInitialGreeting(2100);
+          logEvent("initial_greeting_delayed_for_inbound_audio", { callSid: session.callSid });
+          return;
+        }
+        logEvent("initial_greeting_ignored_weak_initial_audio", { callSid: session.callSid });
+      } else {
+        initialCustomerAudioHeard = true;
       }
       if (initialGreetingInProgress) {
         clearTimeout(initialGreetingTimer);
@@ -735,8 +773,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
 
     if (event.type === "input_audio_buffer.speech_stopped" && !initialGreetingDone && !initialGreetingInProgress) {
-      initialGreetingBlockedUntil = Date.now() + 450;
-      scheduleInitialGreeting(700);
+      initialGreetingBlockedUntil = Date.now() + 900;
+      scheduleInitialGreeting(1050);
       return;
     }
 
