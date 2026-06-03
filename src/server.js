@@ -17,6 +17,7 @@ import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
 import { getTelegramUpdates, notifySellerTelegram } from "./telegram.js";
 import { elevenLabsConfigured, synthesizeElevenLabsUlaw } from "./elevenlabs.js";
+import { readLearningFeedback, saveLearningFeedback } from "./learning.js";
 
 const app = express();
 const recordingCalls = new Map();
@@ -200,6 +201,23 @@ app.get("/debug/logs", requireAdmin, (_req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+app.post("/admin/learning-feedback", requireAdmin, (req, res) => {
+  const record = saveLearningFeedback(req.body || {});
+  logEvent("learning_feedback_saved", {
+    callSid: record.callSid,
+    category: record.category
+  });
+  res.json({ ok: true, feedback: record });
+});
+
+app.get("/admin/learning-feedback", requireAdmin, (req, res) => {
+  const limit = Number(req.query.limit || 50);
+  res.json({
+    ok: true,
+    feedback: readLearningFeedback(Number.isFinite(limit) ? limit : 50)
+  });
 });
 
 app.post("/admin/test-whatsapp", requireAdmin, async (req, res) => {

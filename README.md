@@ -128,3 +128,29 @@ Rigenera e conserva solo in `.env`:
 - `GOOGLE_OAUTH_REFRESH_TOKEN`
 
 Le chiavi incollate in chat devono essere revocate.
+
+## Miglioramento Giusy
+
+Per registrare una lezione appresa da una telefonata, usa l'endpoint admin:
+
+```text
+POST /admin/learning-feedback?token=ADMIN_TOKEN
+```
+
+Body JSON di esempio:
+
+```json
+{
+  "callSid": "CA...",
+  "category": "conversazione",
+  "issue": "Giusy ha proposto appuntamento troppo presto.",
+  "desiredBehavior": "Restare sulle caratteristiche dell'auto finche il cliente non chiede una visita.",
+  "proposedRule": "Non chiedere giorno e ora mentre si parla ancora di caratteristiche."
+}
+```
+
+Per leggere le ultime note:
+
+```text
+GET /admin/learning-feedback?token=ADMIN_TOKEN
+```
