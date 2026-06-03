@@ -585,7 +585,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
               type: "server_vad",
               threshold: 0.6,
               prefix_padding_ms: 220,
-              silence_duration_ms: 430,
+              silence_duration_ms: 360,
               interrupt_response: true
             }
           },
