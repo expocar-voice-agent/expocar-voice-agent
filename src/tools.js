@@ -99,16 +99,27 @@ function spokenAlternatives(slots = []) {
 }
 
 function inventorySpokenReply(inventory) {
-  const lines = (inventory.results || []).slice(0, 3).map((car) => car.spokenLine).filter(Boolean);
+  if (inventory.count > 2 && !inventory.hasSpecificModelFilter) {
+    return `Ne vedo ${inventory.count} compatibili. Cerca un modello in particolare, oppure vuole che le dica le prime disponibili?`;
+  }
+
+  const lines = (inventory.results || [])
+    .slice(0, 2)
+    .map((car) => {
+      const detail = car.shortDetailLine || car.spokenLine;
+      return detail ? `Per ${car.intro || "questa auto"}. ${detail}.` : "";
+    })
+    .filter(Boolean);
   if (!lines.length) {
     return "Al momento non vedo una corrispondenza precisa in stock. Se vuole, posso raccogliere le preferenze e far verificare una ricerca su misura.";
   }
   const prefix = inventory.count > lines.length
-    ? `Ne vedo ${inventory.count} compatibili. Le dico le prime ${lines.length}: `
+    ? `Ne vedo ${inventory.count} compatibili. Le dico le prime due piu vicine alla richiesta. `
     : inventory.count === 1
-      ? "Ne vedo una disponibile: "
-      : `Ne vedo ${inventory.count} disponibili: `;
-  return `${prefix}${lines.join(". ")}. Vuole fissare una visita per vederne una?`;
+      ? "Ne vedo una disponibile. "
+      : `Ne vedo ${inventory.count} disponibili. `;
+  const more = inventory.count > lines.length ? "Se vuole, poi posso verificare anche altri modelli simili. " : "";
+  return `${prefix}${lines.join(" ")} ${more}Vuole fissare una visita per vederne una?`;
 }
 
 function buildImportSummary(args) {
@@ -178,6 +189,18 @@ function hasInventoryFilters(args = {}) {
     || args.maxMileage
     || args.minYear
     || args.keyword
+  );
+}
+
+function hasSpecificModelFilter(args = {}) {
+  return Boolean(
+    args.model
+    || args.keyword
+    || args.fuel
+    || args.gearbox
+    || args.maxBudget
+    || args.maxMileage
+    || args.minYear
   );
 }
 
@@ -401,15 +424,20 @@ export async function runTool(name, args, context = {}) {
       };
     }
 
-    const spokenReply = inventorySpokenReply(inventory);
+    const hasSpecific = hasSpecificModelFilter(args);
+    const spokenReply = inventorySpokenReply({
+      ...inventory,
+      hasSpecificModelFilter: hasSpecific
+    });
     return {
       results: inventory.results,
       count: inventory.count,
       shownCount: inventory.results.length,
       totalAvailable: inventory.totalAvailable,
+      hasSpecificModelFilter: hasSpecific,
       spokenReply,
       message: inventory.count
-        ? `Usa spokenReply come base, senza leggere campi tecnici. Per elenco iniziale usa solo spokenLine. Se il cliente chiede dettagli base come cambio, carburante, colore o cavalli, usa detailLine o rispondi solo al dettaglio richiesto. Non aggiungere titoli, versioni, allestimenti, optional o descrizioni.`
+        ? `Usa spokenReply come base, senza leggere campi tecnici. Se hasSpecificModelFilter e false e ci sono molte auto, chiedi prima quale modello cerca invece di elencarle tutte. Se il cliente chiede dettagli base come cambio, carburante, colore o cavalli, usa detailLine o rispondi solo al dettaglio richiesto. Non aggiungere titoli, versioni, allestimenti, optional o descrizioni.`
         : `Usa spokenReply. Non dire che e impossibile: proponi ricerca su misura o verifica con consulente.`
     };
   }

@@ -146,7 +146,7 @@ function cleanSpokenText(value) {
 function spokenMileage(value) {
   const km = toNumber(value);
   if (!km) return "";
-  return `circa ${Math.max(1, Math.floor(km / 1000))} mila chilometri`;
+  return `Circa ${Math.max(1, Math.floor(km / 1000))} mila chilometri`;
 }
 
 function spokenPrice(value) {
@@ -175,20 +175,28 @@ function publicCar(car) {
   const powerText = spokenPower(car.powerCv);
   const spokenLine = [
     [brand, model].filter(Boolean).join(" "),
-    year ? `anno ${year}` : "",
+    year ? `Anno ${year}` : "",
     mileageText,
-    priceText ? `prezzo ${priceText}` : ""
-  ].filter(Boolean).join(", ");
+    priceText ? `Prezzo ${priceText}` : ""
+  ].filter(Boolean).join(". ");
+  const shortDetailLine = [
+    year ? `Anno ${year}` : "",
+    mileageText,
+    priceText ? `Prezzo ${priceText}` : ""
+  ].filter(Boolean).join(". ");
   const detailLine = [
     spokenLine,
-    color ? `colore ${color}` : "",
-    gearbox ? `cambio ${gearbox}` : "",
-    fuel ? `carburante ${fuel}` : "",
-    powerText ? `potenza ${powerText}` : ""
-  ].filter(Boolean).join(", ");
+    color ? `Colore ${color}` : "",
+    gearbox ? `Cambio ${gearbox}` : "",
+    fuel ? `Carburante ${fuel}` : "",
+    powerText ? `Potenza ${powerText}` : ""
+  ].filter(Boolean).join(". ");
+  const intro = model || [brand, model].filter(Boolean).join(" ") || "questa auto";
 
   return {
+    intro,
     spokenLine,
+    shortDetailLine,
     detailLine
   };
 }
