@@ -387,7 +387,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "trasferisci_chiamata",
-    description: "Trasferisce solo se il cliente vuole parlare subito con una persona.",
+    description: "Trasferisce la telefonata a un operatore reale quando il cliente chiede di parlare con un consulente vendite, un venditore, una persona, un operatore o un umano. Non usare solo per fissare un appuntamento.",
     parameters: {
       type: "object",
       properties: {
