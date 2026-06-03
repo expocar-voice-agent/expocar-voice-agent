@@ -397,6 +397,17 @@ export const realtimeTools = [
   },
   {
     type: "function",
+    name: "chiudi_chiamata",
+    description: "Chiude la telefonata dopo che Giusy ha pronunciato il saluto finale, solo quando il cliente ha chiaramente concluso la conversazione.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "Motivo della chiusura, per esempio saluti finali del cliente." }
+      }
+    }
+  },
+  {
+    type: "function",
     name: "avvisa_venditore",
     description: "Invia nota al venditore.",
     parameters: {
@@ -654,6 +665,15 @@ export async function runTool(name, args, context = {}) {
       from: context.from,
       reason: args.reason
     });
+  }
+
+  if (name === "chiudi_chiamata") {
+    return {
+      ok: true,
+      closeAfterResponse: true,
+      spokenReply: "Grazie a lei, buona giornata.",
+      message: "Usa spokenReply e non aggiungere altro. La chiamata verra chiusa dopo la risposta."
+    };
   }
 
   if (name === "avvisa_venditore") {

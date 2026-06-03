@@ -306,6 +306,10 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
       if (name === "trasferisci_chiamata") {
         setLeadFact(session, "transfer", args.reason || "Trasferimento richiesto dal cliente.");
       }
+
+      if (name === "chiudi_chiamata") {
+        session.closeAfterResponse = true;
+      }
     }
     logEvent("tool_call_done", { name });
     openaiWs.send(JSON.stringify({
@@ -440,6 +444,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     transcript: [],
     toolCalls: [],
     leadFacts: {},
+    closeAfterResponse: false,
     summarySent: false
   };
 
@@ -816,6 +821,18 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
       waitingForCustomer = true;
       resetSilenceTimer();
+      if (session.closeAfterResponse) {
+        session.closeAfterResponse = false;
+        logEvent("call_close_after_final_response", { callSid: session.callSid });
+        setTimeout(() => {
+          try {
+            twilioWs.close(1000, "call completed");
+          } catch {}
+          try {
+            openaiWs.close(1000, "call completed");
+          } catch {}
+        }, 650);
+      }
       logEvent("openai_response_done", {
         status: event.response?.status,
         statusDetails: event.response?.status_details,
