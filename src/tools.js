@@ -119,7 +119,7 @@ function inventorySpokenReply(inventory) {
       ? "Ne vedo una disponibile. "
       : `Ne vedo ${inventory.count} disponibili. `;
   const more = inventory.count > lines.length ? "Se vuole, poi posso verificare anche altri modelli simili. " : "";
-  return `${prefix}${lines.join(" ")} ${more}Vuole fissare una visita per vederne una?`;
+  return `${prefix}${lines.join(" ")} ${more}Vuole che le approfondisca una di queste?`;
 }
 
 function buildImportSummary(args) {

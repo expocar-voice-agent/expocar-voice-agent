@@ -111,12 +111,14 @@ function appendTranscript(session, speaker, text) {
 }
 
 function greetingForRome() {
-  const hour = Number(new Intl.DateTimeFormat("it-IT", {
+  const parts = new Intl.DateTimeFormat("it-IT", {
     timeZone: config.business.timezone,
     hour: "2-digit",
     hour12: false
-  }).format(new Date()));
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
 
+  if (Number.isNaN(hour)) return "Buongiorno";
   if (hour < 13) return "Buongiorno";
   if (hour < 18) return "Buon pomeriggio";
   return "Buonasera";
