@@ -306,7 +306,7 @@ app.get("/admin/test-elevenlabs", requireAdmin, async (req, res) => {
       return;
     }
 
-    const audio = await synthesizeElevenLabsUlaw(req.query.text || `Expocar Italia, ${greetingForSentence()}, sono Giusy. Come posso aiutarla?`);
+    const audio = await synthesizeElevenLabsUlaw(req.query.text || "Expocar Italia, sono Giusy.");
     res.json({
       ok: Boolean(audio?.length),
       configured: true,
@@ -948,7 +948,7 @@ app.post("/twilio/voice-greeting", (req, res) => {
   response.say({
     language: "it-IT",
     voice: "Polly.Giorgio"
-  }, `Expocar Italia, ${greetingForSentence()}, sono Giusy. Come posso aiutarla?`);
+  }, "Expocar Italia, sono Giusy.");
   response.pause({ length: 1 });
   response.say({
     language: "it-IT",

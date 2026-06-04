@@ -403,7 +403,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: `Di esattamente: Expocar Italia, ${greetingForSentence()}, sono Giusy. Come posso aiutarla?`
+        instructions: "Di esattamente: Expocar Italia, sono Giusy."
       }
     }));
   });
@@ -516,7 +516,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   function initialGreetingText() {
-    return `Expocar Italia, ${greetingForSentence()}, sono Giusy. Come posso aiutarla?`;
+    return "Expocar Italia, sono Giusy.";
   }
 
   function customerHasSpoken() {
