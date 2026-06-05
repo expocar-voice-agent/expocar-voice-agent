@@ -204,7 +204,7 @@ function hasSpecificModelFilter(args = {}) {
   );
 }
 
-async function transferActiveCall({ callSid, from, reason }) {
+export async function transferActiveCall({ callSid, from, reason }) {
   const client = getTwilioClient();
   const to = normalizePhone(config.twilio.humanTransferTo);
   if (!isBusinessOpenNow()) {
@@ -387,7 +387,7 @@ export const realtimeTools = [
   {
     type: "function",
     name: "trasferisci_chiamata",
-    description: "Trasferisce la telefonata a un operatore reale quando il cliente chiede di parlare con un consulente vendite, un venditore, una persona, un operatore o un umano. Non usare solo per fissare un appuntamento.",
+    description: "Da usare sempre quando il cliente chiede di parlare con un consulente vendite, un venditore, una persona, un operatore o un umano. Controlla orari e disponibilita e, se possibile, prepara il trasferimento reale. Non usare solo per fissare un appuntamento.",
     parameters: {
       type: "object",
       properties: {
@@ -660,11 +660,55 @@ export async function runTool(name, args, context = {}) {
   }
 
   if (name === "trasferisci_chiamata") {
-    return transferActiveCall({
-      callSid: context.callSid,
-      from: context.from,
-      reason: args.reason
-    });
+    const to = normalizePhone(config.twilio.humanTransferTo);
+    const client = getTwilioClient();
+    if (!isBusinessOpenNow()) {
+      notifySeller({
+        body: [
+          "Lead ExpoCar",
+          `Cliente: ${context.from || "numero non disponibile"}`,
+          "Richiesta: parlare con un consulente fuori orario",
+          args.reason ? `Motivo: ${args.reason}` : "",
+          "Trasferimento: non effettuato, fuori orario lavorativo",
+          "Azione: ricontattare il cliente appena possibile"
+        ].filter(Boolean).join("\n")
+      }).catch(() => {});
+      return {
+        ok: true,
+        transferred: false,
+        outsideBusinessHours: true,
+        phone: to || config.twilio.humanTransferTo,
+        spokenReply: "In questo momento i consulenti non sono disponibili al trasferimento diretto. Siamo operativi dal lunedi al venerdi, dalle dieci alle diciannove. Intanto, se vuole, raccolgo io la richiesta.",
+        message: "Usa spokenReply. Non trasferire fuori orario."
+      };
+    }
+    if (!client || !context.callSid || !to) {
+      notifySeller({
+        body: [
+          "Lead ExpoCar",
+          `Cliente: ${context.from || "numero non disponibile"}`,
+          "Richiesta: parlare con un consulente",
+          "Trasferimento: non disponibile, comunicare numero diretto",
+          args.reason ? `Motivo: ${args.reason}` : "",
+          context.callSid ? `Call SID: ${context.callSid}` : ""
+        ].filter(Boolean).join("\n")
+      }).catch(() => {});
+      return {
+        ok: false,
+        transferred: false,
+        phone: to || config.twilio.humanTransferTo,
+        spokenReply: "Al momento non riesco a trasferire la chiamata. Intanto posso annotare la richiesta e farla richiamare.",
+        message: "Usa spokenReply."
+      };
+    }
+    return {
+      ok: true,
+      transferAfterResponse: true,
+      phone: to,
+      reason: args.reason,
+      spokenReply: "La metto subito in contatto con un consulente.",
+      message: "Usa spokenReply e non aggiungere altro. Il trasferimento parte dopo la frase."
+    };
   }
 
   if (name === "chiudi_chiamata") {

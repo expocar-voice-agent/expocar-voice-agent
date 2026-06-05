@@ -2,7 +2,7 @@
 import { config } from "./config.js";
 import { agentInstructions } from "./agentPrompt.js";
 import { logEvent } from "./logger.js";
-import { realtimeTools, runTool } from "./tools.js";
+import { realtimeTools, runTool, transferActiveCall } from "./tools.js";
 import { saveLead } from "./leads.js";
 import { notifySeller } from "./whatsapp.js";
 import { alertSeller } from "./alerts.js";
@@ -312,6 +312,11 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
 
       if (name === "trasferisci_chiamata") {
         setLeadFact(session, "transfer", args.reason || "Trasferimento richiesto dal cliente.");
+        if (output?.transferAfterResponse) {
+          session.transferAfterResponse = {
+            reason: args.reason || "Trasferimento richiesto dal cliente."
+          };
+        }
       }
 
       if (name === "chiudi_chiamata") {
@@ -460,6 +465,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     toolCalls: [],
     leadFacts: {},
     closeAfterResponse: false,
+    transferAfterResponse: null,
     summarySent: false
   };
 
@@ -850,6 +856,28 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
       waitingForCustomer = true;
       resetSilenceTimer();
+      if (session.transferAfterResponse) {
+        const transfer = session.transferAfterResponse;
+        session.transferAfterResponse = null;
+        logEvent("call_transfer_after_spoken_response", { callSid: session.callSid });
+        setTimeout(() => {
+          transferActiveCall({
+            callSid: session.callSid,
+            from: session.from,
+            reason: transfer.reason
+          }).catch((error) => {
+            logEvent("call_transfer_after_response_failed", {
+              callSid: session.callSid,
+              error: error.message
+            });
+            alertSeller("call_transfer_after_response_failed", {
+              message: error.message,
+              callSid: session.callSid,
+              from: session.from
+            });
+          });
+        }, 500);
+      }
       if (session.closeAfterResponse) {
         session.closeAfterResponse = false;
         logEvent("call_close_after_final_response", { callSid: session.callSid });
