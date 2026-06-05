@@ -555,19 +555,17 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
   function scheduleInitialGreetingRepeat() {
     clearTimeout(initialGreetingTimer);
-    if (!initialGreetingDone || initialGreetingRepeated || customerHasSpoken()) return;
-    initialGreetingTimer = setTimeout(() => {
-      if (customerHasSpoken() || responseInProgress || openaiWs.readyState !== WebSocket.OPEN) return;
-      logEvent("initial_greeting_repeated", { callSid: session.callSid });
-      sendInitialGreeting({ repeat: true });
-    }, 5000);
+    return;
   }
 
   function resetSilenceTimer() {
     clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
       const idleMs = Date.now() - lastAssistantAudioAt;
-      const waitMs = waitingForCustomer ? 5000 : 2200;
+      const waitingAfterInitialGreeting = initialGreetingDone
+        && !initialCustomerAudioHeard
+        && !session.transcript.some((piece) => piece.speaker === "Cliente");
+      const waitMs = waitingAfterInitialGreeting ? 12000 : waitingForCustomer ? 6500 : 2200;
       if (idleMs < waitMs || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
         resetSilenceTimer();
         return;
@@ -792,7 +790,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
               streamSid
             }));
           }
-        }, 3000);
+        }, 1400);
       }
       return;
     }
