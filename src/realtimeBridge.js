@@ -47,7 +47,7 @@ function extractName(text) {
   const match = clean.match(/\b(?:mi chiamo|sono|nome\s+e|il nome e|nome)\s+([a-z']{3,}(?:\s+[a-z']{3,})?)/i);
   if (!match) return "";
   const name = match[1].trim();
-  return /giusy|marco|expocar|buongiorno|pomeriggio|buonasera/i.test(name) ? "" : name;
+  return /giusy|martina|marco|expocar|buongiorno|pomeriggio|buonasera/i.test(name) ? "" : name;
 }
 
 function normalizeCallerPhone(value) {
@@ -403,7 +403,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: "Di esattamente: Expocar Italia, sono Giusy."
+        instructions: "Di esattamente: Expocar Italia, sono Martina."
       }
     }));
   });
@@ -516,7 +516,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   function initialGreetingText() {
-    return "Expocar Italia, sono Giusy.";
+    return "Expocar Italia, sono Martina.";
   }
 
   function customerHasSpoken() {
@@ -737,7 +737,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         if (useElevenLabs) {
           assistantTextBuffer = assistantTextBuffer || transcript;
         } else {
-          appendTranscript(session, "Giusy", transcript);
+          appendTranscript(session, "Martina", transcript);
         }
       }
     }
@@ -832,7 +832,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
       if (useElevenLabs && assistantTextBuffer.trim()) {
         const spokenText = assistantTextBuffer.trim();
-        appendTranscript(session, "Giusy", spokenText);
+        appendTranscript(session, "Martina", spokenText);
         await sendElevenLabsAudio(spokenText);
       }
       responseInProgress = false;

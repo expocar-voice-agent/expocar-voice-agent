@@ -129,7 +129,7 @@ Rigenera e conserva solo in `.env`:
 
 Le chiavi incollate in chat devono essere revocate.
 
-## Miglioramento Giusy
+## Miglioramento Martina
 
 Per registrare una lezione appresa da una telefonata, usa l'endpoint admin:
 
@@ -143,7 +143,7 @@ Body JSON di esempio:
 {
   "callSid": "CA...",
   "category": "conversazione",
-  "issue": "Giusy ha proposto appuntamento troppo presto.",
+  "issue": "Martina ha proposto appuntamento troppo presto.",
   "desiredBehavior": "Restare sulle caratteristiche dell'auto finche il cliente non chiede una visita.",
   "proposedRule": "Non chiedere giorno e ora mentre si parla ancora di caratteristiche."
 }

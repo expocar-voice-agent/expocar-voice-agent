@@ -306,7 +306,7 @@ app.get("/admin/test-elevenlabs", requireAdmin, async (req, res) => {
       return;
     }
 
-    const audio = await synthesizeElevenLabsUlaw(req.query.text || "Expocar Italia, sono Giusy.");
+    const audio = await synthesizeElevenLabsUlaw(req.query.text || "Expocar Italia, sono Martina.");
     res.json({
       ok: Boolean(audio?.length),
       configured: true,
@@ -483,7 +483,7 @@ async function purchaseTwilioNumber({ phoneNumber, baseUrl = config.publicBaseUr
   const client = twilio(config.twilio.accountSid, config.twilio.authToken);
   const purchased = await client.incomingPhoneNumbers.create({
     phoneNumber,
-    friendlyName: "Expocar Giusy",
+    friendlyName: "Expocar Martina",
     voiceUrl: `${baseUrl}/twilio/voice`,
     voiceMethod: "POST",
     statusCallback: `${baseUrl}/twilio/status`,
@@ -948,7 +948,7 @@ app.post("/twilio/voice-greeting", (req, res) => {
   response.say({
     language: "it-IT",
     voice: "Polly.Giorgio"
-  }, "Expocar Italia, sono Giusy.");
+  }, "Expocar Italia, sono Martina.");
   response.pause({ length: 1 });
   response.say({
     language: "it-IT",
