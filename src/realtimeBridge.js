@@ -438,6 +438,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let silenceTimer;
   let bargeInTimer;
   let customerSpeechActive = false;
+  let assistantAudioQueuedUntil = 0;
   let initialGreetingInProgress = false;
   let initialGreetingDone = false;
   let initialGreetingRepeated = false;
@@ -490,6 +491,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
           if (twilioWs.readyState !== WebSocket.OPEN) return;
           const frame = audio.subarray(offset, offset + frameBytes);
           lastAssistantAudioAt = Date.now();
+          assistantAudioQueuedUntil = Math.max(assistantAudioQueuedUntil, Date.now()) + Math.ceil(frame.length / 8);
           twilioWs.send(JSON.stringify({
             event: "media",
             streamSid,
@@ -778,19 +780,23 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         logEvent("initial_greeting_interrupt_ignored", { callSid: session.callSid });
         return;
       }
-      if (responseInProgress && openaiWs.readyState === WebSocket.OPEN) {
+      if ((responseInProgress || Date.now() < assistantAudioQueuedUntil + 350) && openaiWs.readyState === WebSocket.OPEN) {
         clearTimeout(bargeInTimer);
         bargeInTimer = setTimeout(() => {
-          if (!customerSpeechActive || !responseInProgress || openaiWs.readyState !== WebSocket.OPEN) return;
+          if (!customerSpeechActive || openaiWs.readyState !== WebSocket.OPEN) return;
+          if (!responseInProgress && Date.now() >= assistantAudioQueuedUntil + 350) return;
           logEvent("barge_in_confirmed_after_sustained_speech", { callSid: session.callSid });
-          openaiWs.send(JSON.stringify({ type: "response.cancel" }));
+          if (responseInProgress) {
+            openaiWs.send(JSON.stringify({ type: "response.cancel" }));
+          }
           if (streamSid) {
             twilioWs.send(JSON.stringify({
               event: "clear",
               streamSid
             }));
           }
-        }, 1400);
+          assistantAudioQueuedUntil = 0;
+        }, 900);
       }
       return;
     }
