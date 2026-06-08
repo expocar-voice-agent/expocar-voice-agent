@@ -159,10 +159,102 @@ function cleanSpokenText(value) {
     .trim();
 }
 
+function smallItalianNumber(value) {
+  const number = Number(value);
+  const words = {
+    1: "uno",
+    2: "due",
+    3: "tre",
+    4: "quattro",
+    5: "cinque",
+    6: "sei",
+    7: "sette",
+    8: "otto",
+    9: "nove",
+    10: "dieci",
+    11: "undici",
+    12: "dodici",
+    13: "tredici",
+    14: "quattordici",
+    15: "quindici",
+    16: "sedici",
+    17: "diciassette",
+    18: "diciotto",
+    19: "diciannove",
+    20: "venti",
+    21: "ventuno",
+    22: "ventidue",
+    23: "ventitre",
+    24: "ventiquattro",
+    25: "venticinque",
+    26: "ventisei",
+    27: "ventisette",
+    28: "ventotto",
+    29: "ventinove",
+    30: "trenta",
+    31: "trentuno",
+    32: "trentadue",
+    33: "trentatre",
+    34: "trentaquattro",
+    35: "trentacinque",
+    36: "trentasei",
+    37: "trentasette",
+    38: "trentotto",
+    39: "trentanove",
+    100: "cento"
+  };
+  if (words[number]) return words[number];
+  if (number > 30 && number < 100) {
+    const tensWords = {
+      3: "trenta",
+      4: "quaranta",
+      5: "cinquanta",
+      6: "sessanta",
+      7: "settanta",
+      8: "ottanta",
+      9: "novanta"
+    };
+    const tens = Math.floor(number / 10);
+    const unit = number % 10;
+    if (!unit) return tensWords[tens];
+    return `${tensWords[tens]} ${words[unit]}`;
+  }
+  if (number > 100 && number < 200) {
+    const rest = number - 100;
+    return rest ? `cento ${smallItalianNumber(rest)}` : "cento";
+  }
+  return String(number);
+}
+
+function spokenModelText(value) {
+  const text = cleanSpokenText(value);
+  const digitWords = {
+    1: "uno",
+    2: "due",
+    3: "tre",
+    4: "quattro",
+    5: "cinque",
+    6: "sei",
+    7: "sette",
+    8: "otto",
+    9: "nove"
+  };
+  return text
+    .replace(/\b([AQX])\s*([1-9])\b/gi, (_, letter, digit) => `${letter.toUpperCase()} ${digitWords[digit]}`)
+    .replace(/\bGLA\b/gi, "G L A")
+    .replace(/\bGLB\b/gi, "G L B")
+    .replace(/\bGLC\b/gi, "G L C")
+    .replace(/\bGLE\b/gi, "G L E")
+    .replace(/\bGLS\b/gi, "G L S")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function spokenMileage(value) {
   const km = toNumber(value);
   if (!km) return "";
-  return `Circa ${Math.max(1, Math.floor(km / 1000))} mila chilometri`;
+  const thousands = Math.max(1, Math.floor(km / 1000));
+  return `Circa ${smallItalianNumber(thousands)} mila chilometri`;
 }
 
 function spokenPrice(value) {
@@ -181,7 +273,7 @@ function spokenPower(value) {
 
 function publicCar(car) {
   const brand = cleanSpokenText(car.brand);
-  const model = cleanSpokenText(car.model);
+  const model = spokenModelText(car.model);
   const year = cleanYear(car.year);
   const mileageText = spokenMileage(car.mileage);
   const priceText = spokenPrice(car.price);
