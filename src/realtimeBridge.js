@@ -169,6 +169,32 @@ function formatRomeDate(value) {
   }).format(date);
 }
 
+function formatRomeCallDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { date: "", time: "" };
+  const dateText = new Intl.DateTimeFormat("it-IT", {
+    timeZone: config.business.timezone,
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  }).format(date);
+  const timeText = new Intl.DateTimeFormat("it-IT", {
+    timeZone: config.business.timezone,
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+  return { date: dateText, time: timeText };
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  if (!minutes) return `${rest} secondi`;
+  if (!rest) return `${minutes} ${minutes === 1 ? "minuto" : "minuti"}`;
+  return `${minutes} ${minutes === 1 ? "minuto" : "minuti"} ${rest} secondi`;
+}
+
 function customerTranscriptPieces(session, limit = 4) {
   return session.transcript
     .filter((piece) => piece.speaker === "Cliente")
@@ -194,20 +220,86 @@ function buildLeadSummary(session) {
   return "Richiesta da completare: consultare registrazione chiamata.";
 }
 
-function buildLeadWhatsapp(session) {
+function transcriptForSummary(session) {
+  return session.transcript
+    .map((piece) => `${piece.speaker}: ${piece.text}`)
+    .join("\n")
+    .slice(-8000);
+}
+
+async function buildAiCallSummary(session) {
+  const transcript = transcriptForSummary(session);
+  if (!transcript.trim()) return "";
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${config.openai.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: config.openai.summaryModel,
+        temperature: 0.2,
+        max_tokens: 220,
+        messages: [
+          {
+            role: "system",
+            content: "Riassumi una telefonata commerciale ExpoCar in italiano. Sii concreto, professionale e breve. Non inventare dati. Evidenzia auto richiesta, richieste specifiche, problemi di comunicazione, appuntamenti, trasferimenti, finanziamenti, promesse di verifica o ricontatto."
+          },
+          {
+            role: "user",
+            content: [
+              `Telefono cliente: ${session.leadFacts.phone || normalizeCallerPhone(session.from) || session.from || "non disponibile"}`,
+              session.leadFacts.interest ? `Interesse noto: ${session.leadFacts.interest}` : "",
+              session.leadFacts.appointmentConfirmed ? `Appuntamento confermato: ${session.leadFacts.appointmentConfirmed}` : "",
+              session.leadFacts.transfer ? `Trasferimento: ${session.leadFacts.transfer}` : "",
+              "",
+              "Trascrizione:",
+              transcript
+            ].filter(Boolean).join("\n")
+          }
+        ]
+      })
+    });
+    if (!response.ok) return "";
+    const data = await response.json();
+    return clipText(data.choices?.[0]?.message?.content || "", 900);
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function buildLeadWhatsapp(session) {
   const durationSeconds = Math.max(0, Math.round((Date.now() - session.startedAt) / 1000));
   const facts = session.leadFacts;
   const customerPieces = customerTranscriptPieces(session);
+  const aiSummary = await buildAiCallSummary(session);
+  const callDate = formatRomeCallDate(session.startedAt);
 
   return [
     "Lead ExpoCar",
-    `Telefono cliente: ${facts.phone || normalizeCallerPhone(session.from) || session.from || "numero non disponibile"}`,
+    "",
+    "Riassunto della chiamata",
+    aiSummary || buildLeadSummary(session),
+    "",
+    "Dettagli chiamata",
+    callDate.date || "",
+    callDate.time ? `Alle ${callDate.time}` : "",
+    session.callSid ? `Call SID: ${session.callSid}` : "",
+    `Durata: ${formatDuration(durationSeconds)}`,
+    "",
+    "Dettagli cliente",
+    facts.phone || normalizeCallerPhone(session.from) || session.from || "numero non disponibile",
     facts.name ? `Nome: ${facts.name}` : "",
     facts.email ? `Email: ${facts.email}` : "",
-    session.callSid ? `Call SID: ${session.callSid}` : "",
-    `Durata circa: ${durationSeconds} sec`,
     "",
-    `Sintesi: ${buildLeadSummary(session)}`,
+    "Dati utili",
     facts.interest ? `Interesse/auto: ${facts.interest}` : "",
     facts.budget ? `Budget/prezzo: ${facts.budget}` : "",
     facts.appointmentConfirmed ? `Appuntamento confermato: ${facts.appointmentConfirmed}` : facts.appointment ? `Appuntamento richiesto: ${facts.appointment}` : "",
@@ -216,8 +308,7 @@ function buildLeadWhatsapp(session) {
     facts.notes ? `Note: ${facts.notes}` : "",
     customerPieces.length ? "" : "",
     customerPieces.length ? `Elementi detti dal cliente: ${customerPieces.join(" | ")}` : "",
-    "",
-    "Per il contenuto preciso della conversazione usa la registrazione chiamata."
+    "Registrazione: usare il link ricevuto nel messaggio separato, se disponibile."
   ].filter((line) => line !== "").join("\n");
 }
 
@@ -234,7 +325,7 @@ async function sendFinalCallSummary(session) {
   });
 
   try {
-    const body = buildLeadWhatsapp(session);
+    const body = await buildLeadWhatsapp(session);
     await notifySeller({ body });
     logEvent("call_lead_whatsapp_sent", {
       callSid: session.callSid,
