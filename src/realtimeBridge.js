@@ -259,18 +259,26 @@ async function sendFinalCallSummary(session) {
   });
 }
 
-async function handleRealtimeToolCall(event, openaiWs, session) {
+async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
   const { name, call_id: callId } = event.item;
   const args = safeJsonParse(event.item.arguments);
   const timeoutMs = name === "cerca_auto"
-    ? 6500
+    ? 3800
     : name === "controlla_disponibilita" || name === "crea_appuntamento"
       ? 6000
       : 3500;
+  let slowToolTimer;
 
   try {
     logEvent("tool_call_started", { name, args });
     session?.toolCalls?.push(name);
+    if (name === "cerca_auto" && typeof options.onSlowTool === "function") {
+      slowToolTimer = setTimeout(() => {
+        Promise.resolve(options.onSlowTool(name, args)).catch((error) => {
+          logEvent("tool_call_bridge_audio_failed", { name, error: error.message });
+        });
+      }, 1200);
+    }
     const output = await Promise.race([
       runTool(name, args, {
         callSid: session?.callSid,
@@ -281,6 +289,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
         setTimeout(() => reject(new Error("Operazione non completata nei tempi previsti.")), timeoutMs);
       })
     ]);
+    clearTimeout(slowToolTimer);
     if (session) {
       if (args.name) setLeadFact(session, "name", args.name);
       if (args.phone) setLeadFact(session, "phone", args.phone);
@@ -333,6 +342,7 @@ async function handleRealtimeToolCall(event, openaiWs, session) {
       }
     }));
   } catch (error) {
+    clearTimeout(slowToolTimer);
     logEvent("tool_call_failed", { name, error: error.message });
     alertSeller("tool_call_failed", {
       message: error.message,
@@ -898,7 +908,16 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
 
     if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
-      await handleRealtimeToolCall(event, openaiWs, session);
+      await handleRealtimeToolCall(event, openaiWs, session, {
+        onSlowTool: async (toolName) => {
+          if (toolName !== "cerca_auto" || !twilioWs || twilioWs.readyState !== WebSocket.OPEN) return;
+          logEvent("tool_call_bridge_audio", { callSid: session.callSid, toolName });
+          if (useElevenLabs && streamSid) {
+            await sendElevenLabsAudio("Un attimo, sto verificando le disponibilita in stock.");
+            lastAssistantAudioAt = Date.now();
+          }
+        }
+      });
     }
   });
 
