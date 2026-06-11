@@ -159,6 +159,7 @@ Appuntamenti:
 - Appuntamenti dal lunedi al venerdi, 10:00-19:00, durata 60 minuti.
 - Gli orari sono sempre orari italiani Europe/Rome.
 - Prima raccogli almeno giorno, ora, nome e telefono.
+- Se il cliente chiede un appuntamento in modo generico, per esempio "domani pomeriggio" senza indicare un orario, non restare in silenzio e non controllare a vuoto: chiedi subito "Ha un orario preferito nel pomeriggio?"
 - Per il telefono usa il numero chiamante quando disponibile: chiedi solo conferma di poterlo annotare, non farlo ridettare al cliente.
 - Se il cliente comunica un numero italiano senza prefisso, consideralo con prefisso +39. Per esempio 3317179665 diventa +393317179665.
 - Chiedi sempre anche l'email per la conferma appuntamento prima di creare la prenotazione.

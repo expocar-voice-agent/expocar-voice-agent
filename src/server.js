@@ -15,6 +15,7 @@ import { readRecentLeads } from "./leads.js";
 import { notifySeller } from "./whatsapp.js";
 import { logEvent } from "./logger.js";
 import { alertSeller } from "./alerts.js";
+import { submitCallRecording } from "./callNotifications.js";
 import { getTelegramUpdates, notifySellerTelegram } from "./telegram.js";
 import { elevenLabsConfigured, synthesizeElevenLabsUlaw } from "./elevenlabs.js";
 import { readLearningFeedback, saveLearningFeedback } from "./learning.js";
@@ -1014,17 +1015,15 @@ app.post("/twilio/recording-status", async (req, res) => {
   if (recordingSid && recordingStatus === "completed") {
     recordingCalls.set(callSid, { ...callInfo, recordingSid });
     try {
-      await notifySeller({
+      await submitCallRecording({
+        callSid,
         body: [
-          "Registrazione chiamata ExpoCar",
-          callInfo.from ? `Cliente: ${callInfo.from}` : "",
-          callSid ? `Call SID: ${callSid}` : "",
+          "Registrazione chiamata",
           req.body?.RecordingDuration ? `Durata registrazione: ${req.body.RecordingDuration} sec` : "",
-          "",
           `Ascolta qui: ${recordingUrl(recordingSid, req)}`
         ].filter(Boolean).join("\n")
       });
-      logEvent("twilio_recording_whatsapp_sent", { callSid, recordingSid });
+      logEvent("twilio_recording_queued_for_lead", { callSid, recordingSid });
     } catch (error) {
       logEvent("twilio_recording_whatsapp_failed", {
         callSid,

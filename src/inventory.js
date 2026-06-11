@@ -150,6 +150,16 @@ function cleanYear(value) {
   return match ? match[0] : text;
 }
 
+function spokenYear(value) {
+  const year = Number(cleanYear(value));
+  if (!year) return cleanYear(value);
+  if (year >= 2000 && year < 2100) {
+    const rest = year - 2000;
+    return rest ? `duemila ${smallItalianNumber(rest)}` : "duemila";
+  }
+  return String(year);
+}
+
 function cleanSpokenText(value) {
   return String(value || "")
     .normalize("NFKD")
@@ -274,7 +284,7 @@ function spokenPower(value) {
 function publicCar(car) {
   const brand = cleanSpokenText(car.brand);
   const model = spokenModelText(car.model);
-  const year = cleanYear(car.year);
+  const year = spokenYear(car.year);
   const mileageText = spokenMileage(car.mileage);
   const priceText = spokenPrice(car.price);
   const color = cleanSpokenText(car.color);

@@ -4,9 +4,9 @@ import { agentInstructions } from "./agentPrompt.js";
 import { logEvent } from "./logger.js";
 import { realtimeTools, runTool, transferActiveCall } from "./tools.js";
 import { saveLead } from "./leads.js";
-import { notifySeller } from "./whatsapp.js";
 import { alertSeller } from "./alerts.js";
 import { elevenLabsConfigured, streamElevenLabsUlaw } from "./elevenlabs.js";
+import { submitCallSummary } from "./callNotifications.js";
 
 function safeJsonParse(value, fallback = {}) {
   try {
@@ -326,8 +326,8 @@ async function sendFinalCallSummary(session) {
 
   try {
     const body = await buildLeadWhatsapp(session);
-    await notifySeller({ body });
-    logEvent("call_lead_whatsapp_sent", {
+    await submitCallSummary({ callSid: session.callSid, body });
+    logEvent("call_lead_summary_queued", {
       callSid: session.callSid,
       from: session.from
     });
@@ -363,7 +363,7 @@ async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
   try {
     logEvent("tool_call_started", { name, args });
     session?.toolCalls?.push(name);
-    if (name === "cerca_auto" && typeof options.onSlowTool === "function") {
+    if (["cerca_auto", "controlla_disponibilita", "crea_appuntamento"].includes(name) && typeof options.onSlowTool === "function") {
       slowToolTimer = setTimeout(() => {
         Promise.resolve(options.onSlowTool(name, args)).catch((error) => {
           logEvent("tool_call_bridge_audio_failed", { name, error: error.message });
@@ -1001,10 +1001,13 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
       await handleRealtimeToolCall(event, openaiWs, session, {
         onSlowTool: async (toolName) => {
-          if (toolName !== "cerca_auto" || !twilioWs || twilioWs.readyState !== WebSocket.OPEN) return;
+          if (!["cerca_auto", "controlla_disponibilita", "crea_appuntamento"].includes(toolName) || !twilioWs || twilioWs.readyState !== WebSocket.OPEN) return;
           logEvent("tool_call_bridge_audio", { callSid: session.callSid, toolName });
           if (useElevenLabs && streamSid) {
-            await sendElevenLabsAudio("Un attimo, sto verificando le disponibilita in stock.");
+            const bridgeText = toolName === "cerca_auto"
+              ? "Un attimo, sto verificando le disponibilita in stock."
+              : "Un attimo, sto controllando l'agenda.";
+            await sendElevenLabsAudio(bridgeText);
             lastAssistantAudioAt = Date.now();
           }
         }
