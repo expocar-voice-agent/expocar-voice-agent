@@ -364,11 +364,12 @@ async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
     logEvent("tool_call_started", { name, args });
     session?.toolCalls?.push(name);
     if (["cerca_auto", "controlla_disponibilita", "crea_appuntamento"].includes(name) && typeof options.onSlowTool === "function") {
+      const slowToolDelayMs = name === "cerca_auto" ? 3000 : 1600;
       slowToolTimer = setTimeout(() => {
         Promise.resolve(options.onSlowTool(name, args)).catch((error) => {
           logEvent("tool_call_bridge_audio_failed", { name, error: error.message });
         });
-      }, 1200);
+      }, slowToolDelayMs);
     }
     const output = await Promise.race([
       runTool(name, args, {
@@ -962,7 +963,11 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       if (session.transferAfterResponse) {
         const transfer = session.transferAfterResponse;
         session.transferAfterResponse = null;
-        logEvent("call_transfer_after_spoken_response", { callSid: session.callSid });
+        const transferDelayMs = Math.max(1400, assistantAudioQueuedUntil - Date.now() + 900);
+        logEvent("call_transfer_after_spoken_response", {
+          callSid: session.callSid,
+          transferDelayMs
+        });
         setTimeout(() => {
           transferActiveCall({
             callSid: session.callSid,
@@ -979,7 +984,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
               from: session.from
             });
           });
-        }, 500);
+        }, transferDelayMs);
       }
       if (session.closeAfterResponse) {
         session.closeAfterResponse = false;

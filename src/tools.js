@@ -113,6 +113,13 @@ function inventorySpokenReply(inventory) {
   if (!lines.length) {
     return "Al momento non vedo una corrispondenza precisa in stock. Se vuole, posso raccogliere le preferenze e far verificare una ricerca su misura.";
   }
+  if (inventory.fallbackFromRequestedVehicle) {
+    const prefix = inventory.count === 1
+      ? "Non vedo una corrispondenza precisa con quelle caratteristiche, però vedo questa auto in stock. "
+      : `Non vedo una corrispondenza precisa con quelle caratteristiche, però vedo ${inventory.count} auto di quel modello in stock. `;
+    const more = inventory.count > lines.length ? "Se vuole, poi posso verificare anche le altre. " : "";
+    return `${prefix}${lines.join(" ")} ${more}Vuole che le approfondisca questa?`;
+  }
   const prefix = inventory.count > lines.length
     ? `Ne vedo ${inventory.count} compatibili. Le dico le prime due piu vicine alla richiesta. `
     : inventory.count === 1
@@ -446,6 +453,7 @@ export async function runTool(name, args, context = {}) {
       shownCount: inventory.results.length,
       totalAvailable: inventory.totalAvailable,
       hasSpecificModelFilter: hasSpecific,
+      fallbackFromRequestedVehicle: inventory.fallbackFromRequestedVehicle,
       spokenReply,
       message: inventory.count
         ? `Usa spokenReply come base, senza leggere campi tecnici. Se hasSpecificModelFilter e false e ci sono molte auto, chiedi prima quale modello cerca invece di elencarle tutte. Se il cliente chiede dettagli base come cambio, carburante, colore o cavalli, usa detailLine o rispondi solo al dettaglio richiesto. Non aggiungere titoli, versioni, allestimenti, optional o descrizioni.`

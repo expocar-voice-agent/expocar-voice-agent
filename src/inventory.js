@@ -388,11 +388,20 @@ function filterInventory(cars, filters = {}) {
 
 export async function searchInventoryDetailed(filters = {}, limit = 5) {
   const cars = await fetchInventory();
-  const matches = filterInventory(cars, filters);
+  const exactMatches = filterInventory(cars, filters);
+  const hasRequestedVehicle = Boolean(filters.brand || filters.model);
+  const fallbackMatches = exactMatches.length || !hasRequestedVehicle
+    ? []
+    : cars
+      .filter((car) => carMatchesBrand(car, filters.brand))
+      .filter((car) => carMatchesModel(car, filters.model));
+  const matches = exactMatches.length ? exactMatches : fallbackMatches;
   return {
     results: matches.slice(0, limit).map(publicCar),
     count: matches.length,
-    totalAvailable: cars.length
+    totalAvailable: cars.length,
+    exactMatch: exactMatches.length > 0,
+    fallbackFromRequestedVehicle: !exactMatches.length && fallbackMatches.length > 0
   };
 }
 
