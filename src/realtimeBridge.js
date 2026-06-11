@@ -680,7 +680,9 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         return;
       }
       logEvent("anti_silence_prompt", { callSid: session.callSid, idleMs });
-      sendQuickAudio(waitingForCustomer
+      sendQuickAudio(waitingAfterInitialGreeting
+        ? "Di esattamente, senza aggiungere altro: Expocar Italia, sono Martina."
+        : waitingForCustomer
         ? "Di una sola frase molto naturale, come in una telefonata reale: Mi sente? oppure E ancora in linea?"
         : "Di una sola frase brevissima e naturale, senza ripeterla due volte: Sì, guardo subito. oppure Un attimo che controllo.");
       lastAssistantAudioAt = Date.now();
