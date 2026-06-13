@@ -388,7 +388,7 @@ async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
     logEvent("tool_call_started", { name, args });
     session?.toolCalls?.push(name);
     if (["cerca_auto", "controlla_disponibilita", "crea_appuntamento"].includes(name) && typeof options.onSlowTool === "function") {
-      const slowToolDelayMs = name === "cerca_auto" ? 3000 : 1600;
+      const slowToolDelayMs = name === "cerca_auto" ? 2600 : 2200;
       slowToolTimer = setTimeout(() => {
         Promise.resolve(options.onSlowTool(name, args)).catch((error) => {
           logEvent("tool_call_bridge_audio_failed", { name, error: error.message });
@@ -574,6 +574,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let bargeInTimer;
   let customerSpeechActive = false;
   let assistantAudioQueuedUntil = 0;
+  let ttsPlaybackGeneration = 0;
+  let assistantTtsInterrupted = false;
   let initialGreetingInProgress = false;
   let initialGreetingDone = false;
   let initialGreetingRepeated = false;
@@ -585,6 +587,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let initialAudioWaitLogged = false;
   let initialInboundVoiceFrames = 0;
   let assistantTextBuffer = "";
+  let assistantTtsRemainder = "";
+  let assistantTtsQueue = Promise.resolve();
   const useElevenLabs = elevenLabsConfigured();
   const session = {
     startedAt: Date.now(),
@@ -619,12 +623,15 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
   async function sendElevenLabsAudio(text) {
     if (!useElevenLabs || !streamSid || !text.trim()) return false;
+    if (assistantTtsInterrupted) return false;
+    const playbackGeneration = ++ttsPlaybackGeneration;
     try {
       const result = await streamElevenLabsUlaw(text, async (audio) => {
         const frameBytes = Math.max(80, config.elevenlabs.frameBytes || 160);
         const frameDelayMs = Math.max(0, config.elevenlabs.frameDelayMs || 0);
         for (let offset = 0; offset < audio.length; offset += frameBytes) {
           if (twilioWs.readyState !== WebSocket.OPEN) return;
+          if (assistantTtsInterrupted || playbackGeneration !== ttsPlaybackGeneration) return;
           const frame = audio.subarray(offset, offset + frameBytes);
           lastAssistantAudioAt = Date.now();
           assistantAudioQueuedUntil = Math.max(assistantAudioQueuedUntil, Date.now()) + Math.ceil(frame.length / 8);
@@ -651,6 +658,38 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       });
       return false;
     }
+  }
+
+  function queueElevenLabsAudio(text) {
+    const clean = String(text || "").replace(/\s+/g, " ").trim();
+    if (!useElevenLabs || !clean || assistantTtsInterrupted) return assistantTtsQueue;
+    assistantTtsQueue = assistantTtsQueue.then(() => sendElevenLabsAudio(clean));
+    return assistantTtsQueue;
+  }
+
+  function queueSpeakableText({ flush = false } = {}) {
+    if (!useElevenLabs || assistantTtsInterrupted) return;
+    let text = assistantTtsRemainder.replace(/\s+/g, " ").trim();
+    if (!text) return;
+
+    let chunk = "";
+    const sentence = text.match(/^(.{28,240}?[.!?])\s+/);
+    if (sentence) {
+      chunk = sentence[1].trim();
+    } else if (flush) {
+      chunk = text;
+    }
+
+    if (!chunk) return;
+    assistantTtsRemainder = text.slice(chunk.length).trim();
+    queueElevenLabsAudio(chunk);
+  }
+
+  function resetAssistantResponseAudio() {
+    assistantTextBuffer = "";
+    assistantTtsRemainder = "";
+    assistantTtsQueue = Promise.resolve();
+    assistantTtsInterrupted = false;
   }
 
   function initialGreetingText() {
@@ -767,8 +806,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
             format: { type: "audio/pcmu" },
             transcription: {
               model: "gpt-4o-mini-transcribe",
-              language: "it",
-              prompt: "Trascrivi solo parole realmente pronunciate in italiano. Ignora rumori di fondo, brusii, musica, voci lontane e parole non chiare. Non inventare frasi."
+              prompt: "Trascrivi solo parole realmente pronunciate in italiano o inglese. Ignora rumori di fondo, brusii, musica, voci lontane, micro-assensi e parole non chiare. Non inventare frasi."
             },
             turn_detection: {
               type: "server_vad",
@@ -888,7 +926,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       responseInProgress = true;
       responseStartedAt = Date.now();
       waitingForCustomer = false;
-      assistantTextBuffer = "";
+      resetAssistantResponseAudio();
       resetSilenceTimer();
     }
 
@@ -910,6 +948,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       if (transcript) {
         if (useElevenLabs) {
           assistantTextBuffer = assistantTextBuffer || transcript;
+          if (!assistantTtsRemainder.trim()) assistantTtsRemainder = transcript;
         } else {
           appendTranscript(session, "Martina", transcript);
         }
@@ -917,12 +956,19 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     }
 
     if (event.type === "response.output_text.delta" || event.type === "response.text.delta") {
-      assistantTextBuffer += event.delta || "";
+      const delta = event.delta || "";
+      assistantTextBuffer += delta;
+      assistantTtsRemainder += delta;
+      queueSpeakableText();
       return;
     }
 
     if (event.type === "response.output_text.done" || event.type === "response.text.done") {
-      assistantTextBuffer = event.text || assistantTextBuffer;
+      if (event.text && !assistantTextBuffer.trim()) {
+        assistantTextBuffer = event.text;
+        assistantTtsRemainder = event.text;
+        queueSpeakableText();
+      }
       return;
     }
 
@@ -961,6 +1007,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
           if (responseInProgress) {
             openaiWs.send(JSON.stringify({ type: "response.cancel" }));
           }
+          assistantTtsInterrupted = true;
+          ttsPlaybackGeneration += 1;
           if (streamSid) {
             twilioWs.send(JSON.stringify({
               event: "clear",
@@ -1007,11 +1055,13 @@ export function bridgeTwilioToOpenAI(twilioWs) {
     if (event.type === "response.done") {
       if (useElevenLabs && !assistantTextBuffer.trim()) {
         assistantTextBuffer = extractTranscript(event);
+        assistantTtsRemainder = assistantTextBuffer;
       }
       if (useElevenLabs && assistantTextBuffer.trim()) {
         const spokenText = assistantTextBuffer.trim();
         appendTranscript(session, "Martina", spokenText);
-        await sendElevenLabsAudio(spokenText);
+        queueSpeakableText({ flush: true });
+        await assistantTtsQueue;
       }
       responseInProgress = false;
       responseStartedAt = 0;
@@ -1040,7 +1090,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
           transferActiveCall({
             callSid: session.callSid,
             from: session.from,
-            reason: transfer.reason
+            reason: transfer.reason,
+            language: transfer.language
           }).catch((error) => {
             logEvent("call_transfer_after_response_failed", {
               callSid: session.callSid,

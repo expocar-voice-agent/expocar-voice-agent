@@ -282,7 +282,8 @@ function hasSpecificModelFilter(args = {}) {
   );
 }
 
-export async function transferActiveCall({ callSid, from, reason }) {
+export async function transferActiveCall({ callSid, from, reason, language }) {
+  const replyContext = { language };
   const client = getTwilioClient();
   const to = normalizePhone(config.twilio.humanTransferTo);
   if (!isBusinessOpenNow()) {
@@ -301,7 +302,8 @@ export async function transferActiveCall({ callSid, from, reason }) {
       transferred: false,
       outsideBusinessHours: true,
       phone: to || config.twilio.humanTransferTo,
-      spokenReply: "In questo momento i consulenti non sono disponibili al trasferimento diretto. Siamo operativi dal lunedi al venerdi, dalle dieci alle diciannove. Puo scriverci anche su WhatsApp al tre sette uno, uno nove tre, otto otto otto cinque. Intanto, se vuole, raccolgo io la richiesta.",
+      spokenReply: transferOutsideHoursReply(replyContext),
+      language: conversationLanguage(replyContext),
       message: "Usa spokenReply. Non trasferire fuori orario."
     };
   }
@@ -320,7 +322,8 @@ export async function transferActiveCall({ callSid, from, reason }) {
       ok: false,
       transferred: false,
       phone: to || config.twilio.humanTransferTo,
-      spokenReply: "Al momento non riesco a trasferire la chiamata. Puo chiamarci o scriverci su WhatsApp al tre sette uno, uno nove tre, otto otto otto cinque. Intanto posso annotare la richiesta.",
+      spokenReply: transferUnavailableReply(replyContext),
+      language: conversationLanguage(replyContext),
       message: "Usa spokenReply."
     };
   }
@@ -363,7 +366,8 @@ export async function transferActiveCall({ callSid, from, reason }) {
     ok: true,
     transferred: true,
     phone: to,
-    spokenReply: "La metto in contatto con un consulente.",
+    spokenReply: transferReply(replyContext),
+    language: conversationLanguage(replyContext),
     message: "Trasferimento avviato. Non aggiungere altro."
   };
 }
@@ -549,7 +553,7 @@ export async function runTool(name, args, context = {}) {
             localDate: args.localDate,
             localTime: args.localTime
           }),
-          1800,
+          2800,
           "SimplyBook non ha risposto in tempo."
         );
         const slot = slimSlot(requestedSlot.slot);
@@ -583,7 +587,7 @@ export async function runTool(name, args, context = {}) {
       }
       const slots = await withTimeout(
         getSimplyBookSlots(args),
-        1800,
+        2800,
         "SimplyBook non ha risposto in tempo."
       );
       const alternatives = slots.slice(0, 2).map(slimSlot).filter(Boolean);
@@ -659,7 +663,7 @@ export async function runTool(name, args, context = {}) {
           phone: args.phone || callerPhone || context.from,
           callSid: context.callSid
         }),
-        2800,
+        4300,
         "SimplyBook non ha creato l'appuntamento in tempo."
       );
     } catch (error) {
