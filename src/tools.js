@@ -81,6 +81,51 @@ function shortRomeDate(value) {
   }).format(date);
 }
 
+function parseAppointmentDate(args = {}, { fallbackToday = false } = {}) {
+  const raw = args.requestedStartTime || args.startTime || args.preferredDate || args.localDate;
+  if (!raw) return fallbackToday ? new Date() : null;
+  const text = String(raw).trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(text)
+    ? new Date(`${text}T12:00:00+02:00`)
+    : new Date(text);
+  return Number.isNaN(date.getTime()) ? (fallbackToday ? new Date() : null) : date;
+}
+
+function isWeekendInRome(date) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: config.business.timezone,
+    weekday: "short"
+  }).formatToParts(date);
+  const weekday = parts.find((part) => part.type === "weekday")?.value;
+  return ["Sat", "Sun"].includes(weekday);
+}
+
+function nextBusinessDayLabel(date) {
+  const next = new Date(date);
+  do {
+    next.setDate(next.getDate() + 1);
+  } while (isWeekendInRome(next));
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: config.business.timezone,
+    weekday: "long",
+    day: "numeric",
+    month: "long"
+  }).format(next);
+}
+
+function weekendAppointmentBlock(args = {}, { fallbackToday = false } = {}) {
+  const date = parseAppointmentDate(args, { fallbackToday });
+  if (!date || !isWeekendInRome(date)) return null;
+  const nextDay = nextBusinessDayLabel(date);
+  return {
+    bookingSystemAvailable: false,
+    weekendBlocked: true,
+    requestedDate: args.localDate || args.preferredDate || args.requestedStartTime || args.startTime || "",
+    spokenReply: `Sabato e domenica non fissiamo appuntamenti in sede e non e possibile visionare auto in giornata. Il primo giorno utile e ${nextDay}: vuole che le proponga un orario disponibile?`,
+    message: "Usa spokenReply. Non controllare l'agenda per sabato o domenica e non dire che stai verificando disponibilita."
+  };
+}
+
 function slimSlot(slot) {
   if (!slot) return null;
   return {
@@ -175,6 +220,32 @@ function isBusinessOpenNow() {
   if (["Sat", "Sun"].includes(data.weekday)) return false;
   const minutes = Number(data.hour) * 60 + Number(data.minute);
   return minutes >= config.business.openHour * 60 && minutes < config.business.closeHour * 60;
+}
+
+function conversationLanguage(args = {}) {
+  const value = String(args.language || args.customerLanguage || "").toLowerCase();
+  if (value.startsWith("en") || value.includes("english") || value.includes("inglese") || value.includes("non-italian")) {
+    return "en";
+  }
+  return "it";
+}
+
+function transferReply(args = {}) {
+  return conversationLanguage(args) === "en"
+    ? "I'll connect you with a sales consultant now."
+    : "La metto subito in contatto con un consulente.";
+}
+
+function transferUnavailableReply(args = {}) {
+  return conversationLanguage(args) === "en"
+    ? "I can't transfer the call right now. I can take your request and have a consultant call you back."
+    : "Al momento non riesco a trasferire la chiamata. Intanto posso annotare la richiesta e farla richiamare.";
+}
+
+function transferOutsideHoursReply(args = {}) {
+  return conversationLanguage(args) === "en"
+    ? "Our consultants are available Monday to Friday, from ten to seven. I can take your request and have you called back."
+    : "In questo momento i consulenti non sono disponibili al trasferimento diretto. Siamo operativi dal lunedi al venerdi, dalle dieci alle diciannove. Intanto, se vuole, raccolgo io la richiesta.";
 }
 
 function withTimeout(promise, ms, message) {
@@ -398,7 +469,12 @@ export const realtimeTools = [
     parameters: {
       type: "object",
       properties: {
-        reason: { type: "string", description: "Motivo del trasferimento richiesto dal cliente." }
+        reason: { type: "string", description: "Motivo del trasferimento richiesto dal cliente." },
+        language: {
+          type: "string",
+          enum: ["it", "en"],
+          description: "Lingua della conversazione: it se il cliente parla italiano, en se il cliente non parla italiano o la conversazione e in inglese."
+        }
       }
     }
   },
@@ -462,6 +538,9 @@ export async function runTool(name, args, context = {}) {
   }
 
   if (name === "controlla_disponibilita") {
+    const weekendBlock = weekendAppointmentBlock(args, { fallbackToday: true });
+    if (weekendBlock) return weekendBlock;
+
     try {
       if (args.requestedStartTime) {
         const requestedSlot = await withTimeout(
@@ -548,6 +627,14 @@ export async function runTool(name, args, context = {}) {
   }
 
   if (name === "crea_appuntamento") {
+    const weekendBlock = weekendAppointmentBlock(args);
+    if (weekendBlock) {
+      return {
+        appointment: null,
+        ...weekendBlock
+      };
+    }
+
     if (!args.emailAsked) {
       return {
         appointment: null,
@@ -686,7 +773,8 @@ export async function runTool(name, args, context = {}) {
         transferred: false,
         outsideBusinessHours: true,
         phone: to || config.twilio.humanTransferTo,
-        spokenReply: "In questo momento i consulenti non sono disponibili al trasferimento diretto. Siamo operativi dal lunedi al venerdi, dalle dieci alle diciannove. Intanto, se vuole, raccolgo io la richiesta.",
+        language: conversationLanguage(args),
+        spokenReply: transferOutsideHoursReply(args),
         message: "Usa spokenReply. Non trasferire fuori orario."
       };
     }
@@ -705,7 +793,8 @@ export async function runTool(name, args, context = {}) {
         ok: false,
         transferred: false,
         phone: to || config.twilio.humanTransferTo,
-        spokenReply: "Al momento non riesco a trasferire la chiamata. Intanto posso annotare la richiesta e farla richiamare.",
+        language: conversationLanguage(args),
+        spokenReply: transferUnavailableReply(args),
         message: "Usa spokenReply."
       };
     }
@@ -714,7 +803,8 @@ export async function runTool(name, args, context = {}) {
       transferAfterResponse: true,
       phone: to,
       reason: args.reason,
-      spokenReply: "La metto subito in contatto con un consulente.",
+      language: conversationLanguage(args),
+      spokenReply: transferReply(args),
       message: "Usa spokenReply e non aggiungere altro. Il trasferimento parte dopo la frase."
     };
   }

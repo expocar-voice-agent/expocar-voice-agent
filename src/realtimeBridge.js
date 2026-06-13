@@ -350,9 +350,33 @@ async function sendFinalCallSummary(session) {
   });
 }
 
+function inferConversationLanguage(session) {
+  const recentCustomerText = session.transcript
+    .filter((piece) => piece.speaker === "Cliente")
+    .slice(-5)
+    .map((piece) => piece.text)
+    .join(" ")
+    .toLowerCase();
+  if (!recentCustomerText.trim()) return "it";
+
+  const englishMatches = recentCustomerText.match(/\b(hello|hi|please|english|speak|appointment|available|price|car|consultant|sales|thank you|yes|no|looking|interested|can you|do you|have you)\b/g)?.length || 0;
+  const italianMatches = recentCustomerText.match(/\b(buongiorno|salve|italiano|appuntamento|disponibile|prezzo|auto|macchina|consulente|venditore|grazie|si|vorrei|avete|posso|parlare)\b/g)?.length || 0;
+  return englishMatches > italianMatches + 1 ? "en" : "it";
+}
+
+function estimateSpeechMs(text) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean) return 0;
+  const words = clean.split(" ").length;
+  return Math.max(1800, Math.ceil((words / 2.4) * 1000));
+}
+
 async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
   const { name, call_id: callId } = event.item;
-  const args = safeJsonParse(event.item.arguments);
+  const parsedArgs = safeJsonParse(event.item.arguments);
+  const args = name === "trasferisci_chiamata" && !parsedArgs.language
+    ? { ...parsedArgs, language: inferConversationLanguage(session) }
+    : parsedArgs;
   const timeoutMs = name === "cerca_auto"
     ? 3800
     : name === "controlla_disponibilita" || name === "crea_appuntamento"
@@ -415,7 +439,9 @@ async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
         setLeadFact(session, "transfer", args.reason || "Trasferimento richiesto dal cliente.");
         if (output?.transferAfterResponse) {
           session.transferAfterResponse = {
-            reason: args.reason || "Trasferimento richiesto dal cliente."
+            reason: args.reason || "Trasferimento richiesto dal cliente.",
+            spokenReply: output.spokenReply || "",
+            language: output.language || args.language || inferConversationLanguage(session)
           };
         }
       }
@@ -461,7 +487,7 @@ async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
     type: "response.create",
     response: {
       output_modalities: [elevenLabsConfigured() ? "text" : "audio"],
-      instructions: "Rispondi subito in italiano, in modo naturale e breve. Se il risultato dello strumento contiene spokenReply, usala come base della risposta senza leggere campi tecnici, JSON, id, slot, date ISO o nomi di sistemi. Non usare spagnolo, inglese o altre lingue. Non dire mai che il sistema e lento o che c'e un problema tecnico: se manca un dato, chiedi una conferma o di' che lo fai verificare in sede."
+      instructions: "Rispondi subito nella lingua della conversazione: italiano se il cliente parla italiano, inglese semplice se il cliente non parla italiano. Se il risultato dello strumento contiene spokenReply, usala come base principale e non leggere campi tecnici, JSON, id, slot, date ISO o nomi di sistemi. Non usare spagnolo, francese o altre lingue. Non dire mai che il sistema e lento o che c'e un problema tecnico: se manca un dato, chiedi una conferma o di' che lo fai verificare in sede."
     }
   }));
 }
@@ -540,6 +566,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let streamSid;
   let audioDeltaCount = 0;
   let responseInProgress = false;
+  let responseStartedAt = 0;
+  let lastStuckResponseRecoveryAt = 0;
   let waitingForCustomer = false;
   let lastAssistantAudioAt = Date.now();
   let silenceTimer;
@@ -676,7 +704,39 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         && !initialCustomerAudioHeard
         && !session.transcript.some((piece) => piece.speaker === "Cliente");
       const waitMs = waitingAfterInitialGreeting ? 12000 : waitingForCustomer ? 6500 : 2200;
-      if (idleMs < waitMs || openaiWs.readyState !== WebSocket.OPEN || responseInProgress) {
+
+      if (openaiWs.readyState !== WebSocket.OPEN) {
+        resetSilenceTimer();
+        return;
+      }
+
+      if (responseInProgress) {
+        const responseAgeMs = Date.now() - responseStartedAt;
+        const recoveryCooldownMs = Date.now() - lastStuckResponseRecoveryAt;
+        if (responseAgeMs > 11000 && idleMs > 9500 && recoveryCooldownMs > 14000) {
+          lastStuckResponseRecoveryAt = Date.now();
+          logEvent("stuck_response_recovery", {
+            callSid: session.callSid,
+            responseAgeMs,
+            idleMs
+          });
+          try {
+            openaiWs.send(JSON.stringify({ type: "response.cancel" }));
+          } catch {}
+          responseInProgress = false;
+          responseStartedAt = 0;
+          waitingForCustomer = true;
+          setTimeout(() => {
+            if (openaiWs.readyState !== WebSocket.OPEN) return;
+            sendQuickAudio("Di una sola frase naturale e breve: Mi scusi, ci sono. Mi ripete l'ultima richiesta?");
+            lastAssistantAudioAt = Date.now();
+          }, 300);
+        }
+        resetSilenceTimer();
+        return;
+      }
+
+      if (idleMs < waitMs) {
         resetSilenceTimer();
         return;
       }
@@ -807,6 +867,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       });
       if (["response_cancel_not_active", "conversation_already_has_active_response"].includes(event.error?.code)) {
         responseInProgress = false;
+        responseStartedAt = 0;
         return;
       }
       alertSeller("openai_realtime_server_error", {
@@ -825,6 +886,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "response.created") {
       responseInProgress = true;
+      responseStartedAt = Date.now();
       waitingForCustomer = false;
       assistantTextBuffer = "";
       resetSilenceTimer();
@@ -952,6 +1014,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         await sendElevenLabsAudio(spokenText);
       }
       responseInProgress = false;
+      responseStartedAt = 0;
       if (initialGreetingInProgress) {
         initialGreetingInProgress = false;
         initialGreetingDone = true;
@@ -963,10 +1026,15 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       if (session.transferAfterResponse) {
         const transfer = session.transferAfterResponse;
         session.transferAfterResponse = null;
-        const transferDelayMs = Math.max(1400, assistantAudioQueuedUntil - Date.now() + 900);
+        const transferDelayMs = Math.max(
+          4200,
+          assistantAudioQueuedUntil - Date.now() + 2200,
+          estimateSpeechMs(transfer.spokenReply || assistantTextBuffer) + 1200
+        );
         logEvent("call_transfer_after_spoken_response", {
           callSid: session.callSid,
-          transferDelayMs
+          transferDelayMs,
+          language: transfer.language || ""
         });
         setTimeout(() => {
           transferActiveCall({
