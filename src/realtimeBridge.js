@@ -371,6 +371,21 @@ function estimateSpeechMs(text) {
   return Math.max(1800, Math.ceil((words / 2.4) * 1000));
 }
 
+function currentRomeInstruction() {
+  const now = new Date();
+  const label = new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  }).format(now);
+  return [
+    `Oggi in Italia e ${label}.`,
+    "Quando il cliente dice un giorno relativo, per esempio lunedi alle 11, interpreta sempre il primo giorno utile futuro in Italia e non chiedere di specificare la data."
+  ].join(" ");
+}
+
 async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
   const { name, call_id: callId } = event.item;
   const parsedArgs = safeJsonParse(event.item.arguments);
@@ -388,7 +403,11 @@ async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
     logEvent("tool_call_started", { name, args });
     session?.toolCalls?.push(name);
     if (["cerca_auto", "controlla_disponibilita", "crea_appuntamento"].includes(name) && typeof options.onSlowTool === "function") {
-      const slowToolDelayMs = name === "cerca_auto" ? 2600 : 2200;
+      const slowToolDelayMs = name === "cerca_auto"
+        ? 2200
+        : name === "crea_appuntamento"
+          ? 1100
+          : 1500;
       slowToolTimer = setTimeout(() => {
         Promise.resolve(options.onSlowTool(name, args)).catch((error) => {
           logEvent("tool_call_bridge_audio_failed", { name, error: error.message });
@@ -483,13 +502,18 @@ async function handleRealtimeToolCall(event, openaiWs, session, options = {}) {
     }));
   }
 
-  openaiWs.send(JSON.stringify({
-    type: "response.create",
-    response: {
-      output_modalities: [elevenLabsConfigured() ? "text" : "audio"],
-      instructions: "Rispondi subito nella lingua della conversazione: italiano se il cliente parla italiano, inglese semplice se il cliente non parla italiano. Se il risultato dello strumento contiene spokenReply, usala come base principale e non leggere campi tecnici, JSON, id, slot, date ISO o nomi di sistemi. Non usare spagnolo, francese o altre lingue. Non dire mai che il sistema e lento o che c'e un problema tecnico: se manca un dato, chiedi una conferma o di' che lo fai verificare in sede."
-    }
-  }));
+  const followUpInstructions = "Rispondi subito nella lingua della conversazione: italiano se il cliente parla italiano, inglese semplice se il cliente non parla italiano. Se il risultato dello strumento contiene spokenReply, usala come base principale e non leggere campi tecnici, JSON, id, slot, date ISO o nomi di sistemi. Non usare spagnolo, francese o altre lingue. Non dire mai che il sistema e lento o che c'e un problema tecnico: se manca un dato, chiedi una conferma o di' che lo fai verificare in sede.";
+  if (typeof options.requestToolResponse === "function") {
+    options.requestToolResponse(followUpInstructions, { toolName: name });
+  } else {
+    openaiWs.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        output_modalities: [elevenLabsConfigured() ? "text" : "audio"],
+        instructions: followUpInstructions
+      }
+    }));
+  }
 }
 
 function openAIHeaders(extra = {}) {
@@ -589,6 +613,8 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   let assistantTextBuffer = "";
   let assistantTtsRemainder = "";
   let assistantTtsQueue = Promise.resolve();
+  let pendingToolResponseInstructions = "";
+  let pendingToolResponseAt = 0;
   const useElevenLabs = elevenLabsConfigured();
   const session = {
     startedAt: Date.now(),
@@ -619,6 +645,46 @@ export function bridgeTwilioToOpenAI(twilioWs) {
         instructions
       }
     }));
+  }
+
+  function requestModelResponse(instructions, meta = {}) {
+    if (openaiWs.readyState !== WebSocket.OPEN) return;
+    const clean = String(instructions || "").trim();
+    if (!clean) return;
+
+    if (responseInProgress) {
+      pendingToolResponseInstructions = clean;
+      pendingToolResponseAt = Date.now();
+      logEvent("model_response_deferred", {
+        callSid: session.callSid,
+        reason: meta.reason || "response_in_progress",
+        toolName: meta.toolName || ""
+      });
+      resetSilenceTimer();
+      return;
+    }
+
+    pendingToolResponseInstructions = "";
+    pendingToolResponseAt = 0;
+    openaiWs.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        output_modalities: [useElevenLabs ? "text" : "audio"],
+        instructions: clean
+      }
+    }));
+  }
+
+  function flushPendingToolResponse(reason = "response_done") {
+    if (!pendingToolResponseInstructions || responseInProgress) return;
+    const instructions = pendingToolResponseInstructions;
+    pendingToolResponseInstructions = "";
+    pendingToolResponseAt = 0;
+    logEvent("model_response_deferred_flush", {
+      callSid: session.callSid,
+      reason
+    });
+    requestModelResponse(instructions, { reason });
   }
 
   async function sendElevenLabsAudio(text) {
@@ -752,6 +818,29 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       if (responseInProgress) {
         const responseAgeMs = Date.now() - responseStartedAt;
         const recoveryCooldownMs = Date.now() - lastStuckResponseRecoveryAt;
+        const pendingToolAgeMs = pendingToolResponseAt ? Date.now() - pendingToolResponseAt : 0;
+        if (pendingToolResponseInstructions && responseAgeMs > 4200 && pendingToolAgeMs > 1800 && idleMs > 3200 && recoveryCooldownMs > 6500) {
+          const instructions = pendingToolResponseInstructions;
+          pendingToolResponseInstructions = "";
+          pendingToolResponseAt = 0;
+          lastStuckResponseRecoveryAt = Date.now();
+          logEvent("pending_tool_response_recovery", {
+            callSid: session.callSid,
+            responseAgeMs,
+            pendingToolAgeMs,
+            idleMs
+          });
+          try {
+            openaiWs.send(JSON.stringify({ type: "response.cancel" }));
+          } catch {}
+          responseInProgress = false;
+          responseStartedAt = 0;
+          setTimeout(() => {
+            requestModelResponse(instructions, { reason: "pending_tool_response_recovery" });
+          }, 250);
+          resetSilenceTimer();
+          return;
+        }
         if (responseAgeMs > 11000 && idleMs > 9500 && recoveryCooldownMs > 14000) {
           lastStuckResponseRecoveryAt = Date.now();
           logEvent("stuck_response_recovery", {
@@ -799,7 +888,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       session: {
         type: "realtime",
         model: config.openai.realtimeModel,
-        instructions: agentInstructions,
+        instructions: `${agentInstructions}\n\n${currentRomeInstruction()}`,
         output_modalities: [useElevenLabs ? "text" : "audio"],
         audio: {
           input: {
@@ -906,6 +995,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       if (["response_cancel_not_active", "conversation_already_has_active_response"].includes(event.error?.code)) {
         responseInProgress = false;
         responseStartedAt = 0;
+        flushPendingToolResponse(`server_error_${event.error?.code}`);
         return;
       }
       alertSeller("openai_realtime_server_error", {
@@ -1073,6 +1163,16 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
       waitingForCustomer = true;
       resetSilenceTimer();
+      if (pendingToolResponseInstructions) {
+        logEvent("openai_response_done", {
+          status: event.response?.status,
+          statusDetails: event.response?.status_details,
+          outputTypes: event.response?.output?.map((item) => item.type),
+          pendingToolResponse: true
+        });
+        flushPendingToolResponse("response_done_after_tool");
+        return;
+      }
       if (session.transferAfterResponse) {
         const transfer = session.transferAfterResponse;
         session.transferAfterResponse = null;
@@ -1126,13 +1226,18 @@ export function bridgeTwilioToOpenAI(twilioWs) {
 
     if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
       await handleRealtimeToolCall(event, openaiWs, session, {
+        requestToolResponse: (instructions, meta = {}) => {
+          requestModelResponse(instructions, { ...meta, reason: "tool_output_ready" });
+        },
         onSlowTool: async (toolName) => {
           if (!["cerca_auto", "controlla_disponibilita", "crea_appuntamento"].includes(toolName) || !twilioWs || twilioWs.readyState !== WebSocket.OPEN) return;
           logEvent("tool_call_bridge_audio", { callSid: session.callSid, toolName });
           if (useElevenLabs && streamSid) {
             const bridgeText = toolName === "cerca_auto"
-              ? "Un attimo, sto verificando le disponibilita in stock."
-              : "Un attimo, sto controllando l'agenda.";
+              ? "Un attimo, le dico cosa vedo."
+              : toolName === "crea_appuntamento"
+                ? "Sto inserendo la prenotazione, un attimo."
+                : "Controllo l'agenda, un attimo.";
             await sendElevenLabsAudio(bridgeText);
             lastAssistantAudioAt = Date.now();
           }

@@ -546,10 +546,10 @@ export async function runTool(name, args, context = {}) {
     if (weekendBlock) return weekendBlock;
 
     try {
-      if (args.requestedStartTime) {
+      if (args.requestedStartTime || (args.localDate && args.localTime)) {
         const requestedSlot = await withTimeout(
           checkSimplyBookSlot({
-            startTime: args.requestedStartTime,
+            startTime: args.requestedStartTime || "",
             localDate: args.localDate,
             localTime: args.localTime
           }),

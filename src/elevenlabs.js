@@ -52,6 +52,79 @@ function italianHour(value) {
   return words[Number(value)] || String(value);
 }
 
+function smallItalianNumber(value) {
+  const number = Number(value);
+  const words = {
+    0: "zero",
+    1: "uno",
+    2: "due",
+    3: "tre",
+    4: "quattro",
+    5: "cinque",
+    6: "sei",
+    7: "sette",
+    8: "otto",
+    9: "nove",
+    10: "dieci",
+    11: "undici",
+    12: "dodici",
+    13: "tredici",
+    14: "quattordici",
+    15: "quindici",
+    16: "sedici",
+    17: "diciassette",
+    18: "diciotto",
+    19: "diciannove",
+    20: "venti",
+    21: "ventuno",
+    22: "ventidue",
+    23: "ventitre",
+    24: "ventiquattro",
+    25: "venticinque",
+    26: "ventisei",
+    27: "ventisette",
+    28: "ventotto",
+    29: "ventinove",
+    30: "trenta",
+    100: "cento"
+  };
+  if (words[number]) return words[number];
+  if (number > 30 && number < 100) {
+    const tensWords = {
+      3: "trenta",
+      4: "quaranta",
+      5: "cinquanta",
+      6: "sessanta",
+      7: "settanta",
+      8: "ottanta",
+      9: "novanta"
+    };
+    const tens = Math.floor(number / 10);
+    const unit = number % 10;
+    return unit ? `${tensWords[tens]}${words[unit]}` : tensWords[tens];
+  }
+  if (number > 100 && number < 200) {
+    const rest = number - 100;
+    return rest ? `cento ${smallItalianNumber(rest)}` : "cento";
+  }
+  if (number >= 200 && number < 1000) {
+    const hundredsWords = {
+      2: "duecento",
+      3: "trecento",
+      4: "quattrocento",
+      5: "cinquecento",
+      6: "seicento",
+      7: "settecento",
+      8: "ottocento",
+      9: "novecento"
+    };
+    const hundreds = Math.floor(number / 100);
+    const rest = number % 100;
+    return rest ? `${hundredsWords[hundreds]} ${smallItalianNumber(rest)}` : hundredsWords[hundreds];
+  }
+  return String(number);
+}
+
 function spokenTime(hour, minute = "00") {
   if (minute === "00") return `alle ore ${italianHour(hour)}`;
   if (minute === "30") return `alle ore ${italianHour(hour)} e trenta`;
@@ -61,8 +134,22 @@ function spokenTime(hour, minute = "00") {
 function roundedKmText(value) {
   const km = Number(compactNumber(value));
   if (!Number.isFinite(km) || km <= 0) return `${value} chilometri`;
-  const rounded = Math.max(1, Math.floor(km / 1000));
-  return `circa ${rounded} mila chilometri`;
+  const rounded = km >= 100000
+    ? Math.max(1, Math.round(km / 10000) * 10)
+    : km >= 50000
+      ? Math.max(1, Math.round(km / 5000) * 5)
+      : Math.max(1, Math.floor(km / 1000));
+  if (rounded === 100) return "circa centomila chilometri";
+  return `circa ${smallItalianNumber(rounded)} mila chilometri`;
+}
+
+function spokenEuroAmount(value) {
+  const amount = Number(compactNumber(value));
+  if (!Number.isFinite(amount) || amount <= 0) return `${value} euro`;
+  const thousands = Math.floor(amount / 1000);
+  const rest = amount % 1000;
+  if (!thousands) return `${smallItalianNumber(rest)} euro`;
+  return `${smallItalianNumber(thousands)} mila${rest ? ` ${smallItalianNumber(rest)}` : ""} euro`;
 }
 
 export function prepareTextForTelephoneTts(text) {
@@ -77,6 +164,16 @@ export function prepareTextForTelephoneTts(text) {
     .replace(/\bgracias\b/gi, "grazie")
     .replace(/\bvale\b/gi, "va bene")
     .replace(/\bperfecto\b/gi, "va bene")
+    .replace(/\blunedi\b/gi, "lunedì")
+    .replace(/\bmartedi\b/gi, "martedì")
+    .replace(/\bmercoledi\b/gi, "mercoledì")
+    .replace(/\bgiovedi\b/gi, "giovedì")
+    .replace(/\bvenerdi\b/gi, "venerdì")
+    .replace(/\bdisponibilita\b/gi, "disponibilità")
+    .replace(/\bpossibilita\b/gi, "possibilità")
+    .replace(/dal lunedì al venerdì/gi, "da lunedì a venerdì")
+    .replace(/\bnon e disponibile\b/gi, "non è disponibile")
+    .replace(/\be disponibile\b/gi, "è disponibile")
     .replace(/[€]/g, " euro ")
     .replace(/\b(\d{1,3})[.](\d{3})\b/g, "$1$2")
     .trim();
@@ -100,10 +197,7 @@ export function prepareTextForTelephoneTts(text) {
     .replace(/\bGT\b/gi, "G T");
 
   output = output.replace(/\b(?:euro\s*)?(\d{5,6})\s*(?:euro|€)\b/gi, (_match, amount) => {
-    const clean = compactNumber(amount);
-    const thousands = clean.slice(0, -3);
-    const rest = clean.slice(-3).replace(/^0+/, "");
-    return `${thousands} mila${rest ? ` ${rest}` : ""} euro`.replace(/\s+/g, " ");
+    return spokenEuroAmount(amount).replace(/\s+/g, " ");
   });
 
   output = output.replace(/\b(circa\s+)?(\d{5,6})\s*(?:km|chilometri)\b/gi, (_match, approx, km) => {

@@ -83,6 +83,66 @@ function normalizeTime(value) {
   return `${match[1].padStart(2, "0")}:${match[2]}:${match[3] || "00"}`;
 }
 
+function normalizeLooseText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+const italianWeekdays = {
+  lunedi: "Mon",
+  martedi: "Tue",
+  mercoledi: "Wed",
+  giovedi: "Thu",
+  venerdi: "Fri",
+  sabato: "Sat",
+  domenica: "Sun"
+};
+
+function naturalTimeFromText(value) {
+  const text = normalizeLooseText(value);
+  const explicit = text.match(/\b(?:alle|ore)\s+(\d{1,2})(?:[:.](\d{2}))?\b/);
+  if (explicit) return `${explicit[1].padStart(2, "0")}:${explicit[2] || "00"}:00`;
+
+  const clock = text.match(/\b(\d{1,2})[:.](\d{2})\b/);
+  if (clock) return `${clock[1].padStart(2, "0")}:${clock[2]}:00`;
+
+  const withoutWeekdayDate = text.replace(
+    /\b(?:lunedi|martedi|mercoledi|giovedi|venerdi|sabato|domenica)\s+\d{1,2}\b/g,
+    ""
+  );
+  const candidates = [...withoutWeekdayDate.matchAll(/\b(\d{1,2})\b/g)]
+    .map((match) => Number(match[1]))
+    .filter((hour) => hour >= config.business.openHour && hour <= config.business.closeHour);
+  const hour = candidates.at(-1);
+  return hour ? `${String(hour).padStart(2, "0")}:00:00` : "";
+}
+
+function naturalDateFromText(value) {
+  const text = normalizeLooseText(value);
+  const weekdayName = Object.keys(italianWeekdays).find((name) => new RegExp(`\\b${name}\\b`).test(text));
+  if (!weekdayName) return "";
+
+  const targetWeekday = italianWeekdays[weekdayName];
+  const dayMatch = text.match(new RegExp(`\\b${weekdayName}\\s+(\\d{1,2})\\b`));
+  const requestedDay = dayMatch ? Number(dayMatch[1]) : null;
+  const today = formatRomeDate(new Date());
+
+  for (let offset = 0; offset <= 45; offset += 1) {
+    const candidate = addDays(today, offset);
+    const candidateDate = dateFromRomeWallTime(candidate, 12);
+    const parts = getRomeParts(candidateDate);
+    const candidateDay = Number(candidate.slice(-2));
+    if (parts.weekday === targetWeekday && (!requestedDay || candidateDay === requestedDay)) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
 function normalizeEmail(value) {
   const email = String(value || "").trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
@@ -102,10 +162,25 @@ function normalizeItalianPhone(value) {
 }
 
 function appointmentParts(args = {}) {
-  if (args.localDate && args.localTime) {
+  const rawDateText = [
+    args.startTime,
+    args.requestedStartTime,
+    args.preferredDate,
+    args.localDate
+  ].filter(Boolean).join(" ");
+  const rawTimeText = [
+    args.startTime,
+    args.requestedStartTime,
+    args.localTime
+  ].filter(Boolean).join(" ");
+  const naturalDate = naturalDateFromText(rawDateText);
+  const naturalTime = naturalTimeFromText(rawTimeText);
+  const localTime = normalizeTime(args.localTime) || naturalTime;
+
+  if ((args.localDate || naturalDate) && localTime) {
     return {
-      date: normalizeDate(args.localDate),
-      time: normalizeTime(args.localTime)
+      date: args.localDate ? normalizeDate(args.localDate) : naturalDate,
+      time: localTime
     };
   }
 
@@ -330,7 +405,7 @@ export async function getSimplyBookUnits() {
 }
 
 export async function getSimplyBookSlots({ preferredDate, localDate, days = 14 } = {}) {
-  const from = normalizeDate(localDate || preferredDate || new Date());
+  const from = normalizeDate(localDate || naturalDateFromText(preferredDate) || preferredDate || new Date());
   const to = addDays(from, Math.max(0, Number(days) || 14));
   const matrix = await publicRpc("getStartTimeMatrix", [
     from,

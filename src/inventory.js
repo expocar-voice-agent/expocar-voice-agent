@@ -227,11 +227,26 @@ function smallItalianNumber(value) {
     const tens = Math.floor(number / 10);
     const unit = number % 10;
     if (!unit) return tensWords[tens];
-    return `${tensWords[tens]} ${words[unit]}`;
+    return `${tensWords[tens]}${words[unit]}`;
   }
   if (number > 100 && number < 200) {
     const rest = number - 100;
     return rest ? `cento ${smallItalianNumber(rest)}` : "cento";
+  }
+  if (number >= 200 && number < 1000) {
+    const hundredsWords = {
+      2: "duecento",
+      3: "trecento",
+      4: "quattrocento",
+      5: "cinquecento",
+      6: "seicento",
+      7: "settecento",
+      8: "ottocento",
+      9: "novecento"
+    };
+    const hundreds = Math.floor(number / 100);
+    const rest = number % 100;
+    return rest ? `${hundredsWords[hundreds]} ${smallItalianNumber(rest)}` : hundredsWords[hundreds];
   }
   return String(number);
 }
@@ -263,8 +278,13 @@ function spokenModelText(value) {
 function spokenMileage(value) {
   const km = toNumber(value);
   if (!km) return "";
-  const thousands = Math.max(1, Math.floor(km / 1000));
-  return `Circa ${smallItalianNumber(thousands)} mila chilometri`;
+  const thousands = km >= 100000
+    ? Math.max(1, Math.round(km / 10000) * 10)
+    : km >= 50000
+      ? Math.max(1, Math.round(km / 5000) * 5)
+      : Math.max(1, Math.floor(km / 1000));
+  if (thousands === 100) return "circa centomila chilometri";
+  return `circa ${smallItalianNumber(thousands)} mila chilometri`;
 }
 
 function spokenPrice(value) {
@@ -272,13 +292,13 @@ function spokenPrice(value) {
   if (!price) return "";
   const thousands = Math.floor(price / 1000);
   const rest = price % 1000;
-  if (rest === 0) return `${thousands} mila euro`;
-  return `${thousands} mila ${rest} euro`;
+  if (rest === 0) return `${smallItalianNumber(thousands)} mila euro`;
+  return `${smallItalianNumber(thousands)} mila ${smallItalianNumber(rest)} euro`;
 }
 
 function spokenPower(value) {
   const power = toNumber(value);
-  return power ? `${power} cavalli` : "";
+  return power ? `${smallItalianNumber(power)} cavalli` : "";
 }
 
 function publicCar(car) {
