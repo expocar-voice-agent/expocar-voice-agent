@@ -841,7 +841,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
           resetSilenceTimer();
           return;
         }
-        if (responseAgeMs > 11000 && idleMs > 9500 && recoveryCooldownMs > 14000) {
+        if (responseAgeMs > 7000 && idleMs > 5500 && recoveryCooldownMs > 9000) {
           lastStuckResponseRecoveryAt = Date.now();
           logEvent("stuck_response_recovery", {
             callSid: session.callSid,

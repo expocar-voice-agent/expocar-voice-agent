@@ -190,6 +190,11 @@ export function prepareTextForTelephoneTts(text) {
     .replace(/\bX\s*(\d)\b/gi, "X $1")
     .replace(/\bA\s*(\d)\b/gi, "A $1")
     .replace(/\bS\s*(\d)\b/gi, "S $1")
+    .replace(/\b(Ferrari|Porsche|Lamborghini|McLaren)\s+(\d{3,4})\b/gi, (_match, brand, model) => {
+      const spokenModel = model === "500" ? "cinquecento" : spellDigits(model);
+      return `${brand} ${spokenModel}`;
+    })
+    .replace(/\b(296|458|488|812|911)\b/g, (_match, model) => spellDigits(model))
     .replace(/\bGLA\b/gi, "G L A")
     .replace(/\bGLC\b/gi, "G L C")
     .replace(/\bGLE\b/gi, "G L E")

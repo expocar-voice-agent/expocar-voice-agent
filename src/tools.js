@@ -163,7 +163,7 @@ function inventorySpokenReply(inventory) {
       ? "Non vedo una corrispondenza precisa con quelle caratteristiche, però vedo questa auto in stock. "
       : `Non vedo una corrispondenza precisa con quelle caratteristiche, però vedo ${inventory.count} auto di quel modello in stock. `;
     const more = inventory.count > lines.length ? "Se vuole, poi posso verificare anche le altre. " : "";
-    return `${prefix}${lines.join(" ")} ${more}Vuole che le approfondisca questa?`;
+    return `${prefix}${lines.join(" ")} ${more}Se le interessa vederla, possiamo fissare una visita in sede.`;
   }
   const prefix = inventory.count > lines.length
     ? `Ne vedo ${inventory.count} compatibili. Le dico le prime due piu vicine alla richiesta. `
@@ -171,7 +171,10 @@ function inventorySpokenReply(inventory) {
       ? "Ne vedo una disponibile. "
       : `Ne vedo ${inventory.count} disponibili. `;
   const more = inventory.count > lines.length ? "Se vuole, poi posso verificare anche altri modelli simili. " : "";
-  return `${prefix}${lines.join(" ")} ${more}Vuole che le approfondisca una di queste?`;
+  const nextStep = inventory.count === 1
+    ? "Se vuole vederla, possiamo fissare una visita in sede."
+    : "Quale vuole approfondire, oppure vuole fissare una visita?";
+  return `${prefix}${lines.join(" ")} ${more}${nextStep}`;
 }
 
 function buildImportSummary(args) {

@@ -254,6 +254,7 @@ function smallItalianNumber(value) {
 function spokenModelText(value) {
   const text = cleanSpokenText(value);
   const digitWords = {
+    0: "zero",
     1: "uno",
     2: "due",
     3: "tre",
@@ -264,6 +265,11 @@ function spokenModelText(value) {
     8: "otto",
     9: "nove"
   };
+  const modelDigits = text.match(/^\d{3,4}$/);
+  if (modelDigits) {
+    if (text === "500") return "cinquecento";
+    return text.split("").map((digit) => digitWords[digit] || digit).join(" ");
+  }
   return text
     .replace(/\b([AQX])\s*([1-9])\b/gi, (_, letter, digit) => `${letter.toUpperCase()} ${digitWords[digit]}`)
     .replace(/\bGLA\b/gi, "G L A")
