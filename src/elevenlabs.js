@@ -229,6 +229,14 @@ export function prepareTextForTelephoneTts(text) {
     if (numericHour < 7 || numericHour > 22) return _match;
     return spokenTime(hour, minute);
   });
+  output = output.replace(
+    /(?:La metto subito in contatto con un consulente[.!?]?\s*){2,}/gi,
+    "La metto subito in contatto con un consulente. "
+  );
+  output = output.replace(
+    /(?:I'll connect you with a sales consultant now[.!?]?\s*){2,}/gi,
+    "I'll connect you with a sales consultant now. "
+  );
   return output.replace(/\s+/g, " ").trim();
 }
 

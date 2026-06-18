@@ -560,7 +560,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: "Di esattamente: Expocar Italia, sono Martina."
+        instructions: "Di esattamente: Expocar Italia, sono Martina, agente virtuale."
       }
     }));
   });
@@ -759,7 +759,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   function initialGreetingText() {
-    return "Expocar Italia, sono Martina.";
+    return "Expocar Italia, sono Martina, agente virtuale.";
   }
 
   function customerHasSpoken() {
@@ -870,7 +870,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
       logEvent("anti_silence_prompt", { callSid: session.callSid, idleMs });
       sendQuickAudio(waitingAfterInitialGreeting
-        ? "Di esattamente, senza aggiungere altro: Expocar Italia, sono Martina."
+        ? "Di esattamente, senza aggiungere altro: Expocar Italia, sono Martina, agente virtuale."
         : waitingForCustomer
         ? "Di una sola frase molto naturale, come in una telefonata reale: Mi sente? oppure E ancora in linea?"
         : "Di una sola frase brevissima e naturale, senza ripeterla due volte: Sì, guardo subito. oppure Un attimo che controllo.");
@@ -895,7 +895,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
             format: { type: "audio/pcmu" },
             transcription: {
               model: "gpt-4o-mini-transcribe",
-              prompt: "Trascrivi solo parole realmente pronunciate in italiano o inglese. Ignora rumori di fondo, brusii, musica, voci lontane, micro-assensi e parole non chiare. Non inventare frasi."
+              prompt: "Trascrivi solo parole realmente pronunciate in italiano o inglese. Ignora rumori di fondo, brusii, musica, voci lontane, micro-assensi e parole non chiare. Non inventare frasi. Non trascrivere Sea Next, Seanxt o SeaNXT se non viene pronunciato chiaramente dal cliente."
             },
             turn_detection: {
               type: "server_vad",
