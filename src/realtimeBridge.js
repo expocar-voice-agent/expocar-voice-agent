@@ -560,7 +560,7 @@ export function monitorOpenAISipCall(callId) {
     openaiWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: "Di esattamente: Expocar Italia, sono Martina, agente virtuale."
+        instructions: "Di esattamente: Expocar Italia, sono Martina."
       }
     }));
   });
@@ -759,7 +759,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
   }
 
   function initialGreetingText() {
-    return "Expocar Italia, sono Martina, agente virtuale.";
+    return "Expocar Italia, sono Martina.";
   }
 
   function customerHasSpoken() {
@@ -870,7 +870,7 @@ export function bridgeTwilioToOpenAI(twilioWs) {
       }
       logEvent("anti_silence_prompt", { callSid: session.callSid, idleMs });
       sendQuickAudio(waitingAfterInitialGreeting
-        ? "Di esattamente, senza aggiungere altro: Expocar Italia, sono Martina, agente virtuale."
+        ? "Di esattamente, senza aggiungere altro: Expocar Italia, sono Martina."
         : waitingForCustomer
         ? "Di una sola frase molto naturale, come in una telefonata reale: Mi sente? oppure E ancora in linea?"
         : "Di una sola frase brevissima e naturale, senza ripeterla due volte: Sì, guardo subito. oppure Un attimo che controllo.");
